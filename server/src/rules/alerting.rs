@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use chronodb_storage::model::Labels;
 
 /// 告警规则
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,18 +90,111 @@ pub struct Alert {
 /// 告警管理器
 pub struct AlertManager {
     alerts: Vec<Alert>,
+    alert_notifiers: Vec<Box<dyn AlertNotifier>>,
+}
+
+/// 告警通知接口
+pub trait AlertNotifier: Send + Sync {
+    fn notify(&self, alert: &Alert, state_change: bool) -> Result<(), String>;
 }
 
 impl AlertManager {
     pub fn new() -> Self {
         Self {
             alerts: Vec::new(),
+            alert_notifiers: Vec::new(),
         }
     }
     
     /// 添加告警
     pub fn add_alert(&mut self, alert: Alert) {
         self.alerts.push(alert);
+    }
+    
+    /// 创建或更新告警
+    pub fn create_alert(&mut self, name: String, labels: Labels, value: f64, _timestamp: i64, annotations: HashMap<String, String>) {
+        let now = SystemTime::now();
+        let labels_map: HashMap<String, String> = labels.into_iter().map(|label| (label.name, label.value)).collect();
+        
+        // 查找是否已存在相同标签的告警
+        if let Some(existing_alert) = self.alerts.iter_mut().find(|a| {
+            a.name == name && a.labels == labels_map
+        }) {
+            // 更新现有告警
+            let _old_state = existing_alert.state.clone();
+            existing_alert.value = value;
+            existing_alert.last_evaluation = Some(now);
+            existing_alert.annotations = annotations;
+            
+            // 检查是否需要状态转换
+            if existing_alert.state == AlertState::Inactive {
+                existing_alert.state = AlertState::Pending;
+                existing_alert.active_at = Some(now);
+                
+                // 通知状态变化
+                for notifier in &self.alert_notifiers {
+                    let _ = notifier.notify(existing_alert, true);
+                }
+            } else if existing_alert.state == AlertState::Pending {
+                // 检查是否达到持续时间
+                if let Some(active_at) = existing_alert.active_at {
+                    let duration_since_active = now.duration_since(active_at).unwrap();
+                    if duration_since_active >= Duration::from_secs(300) { // 使用300秒作为默认持续时间
+                        existing_alert.state = AlertState::Firing;
+                        
+                        // 通知状态变化
+                        for notifier in &self.alert_notifiers {
+                            let _ = notifier.notify(existing_alert, true);
+                        }
+                    }
+                }
+            }
+        } else {
+            // 创建新告警
+            let new_alert = Alert {
+                name,
+                state: AlertState::Pending,
+                labels: labels_map,
+                annotations,
+                active_at: Some(now),
+                last_evaluation: Some(now),
+                value,
+            };
+            
+            self.alerts.push(new_alert);
+            
+            // 通知新告警
+            let alert_ref = &self.alerts[self.alerts.len() - 1];
+            for notifier in &self.alert_notifiers {
+                let _ = notifier.notify(alert_ref, true);
+            }
+        }
+    }
+    
+    /// 清理过期告警
+    pub fn clean_expired_alerts(&mut self) {
+        let now = SystemTime::now();
+        let mut to_remove = Vec::new();
+        
+        for (i, alert) in self.alerts.iter().enumerate() {
+            if let Some(last_eval) = alert.last_evaluation {
+                if now.duration_since(last_eval).unwrap() > Duration::from_secs(3600) { // 1小时过期
+                    to_remove.push(i);
+                }
+            }
+        }
+        
+        // 反向删除，避免索引变化
+        for i in to_remove.iter().rev() {
+            let alert = &self.alerts[*i];
+            
+            // 通知告警解除
+            for notifier in &self.alert_notifiers {
+                let _ = notifier.notify(alert, true);
+            }
+            
+            self.alerts.remove(*i);
+        }
     }
     
     /// 获取所有告警
@@ -125,6 +219,11 @@ impl AlertManager {
         self.alerts.iter()
             .filter(|a| a.state == AlertState::Firing)
             .count()
+    }
+    
+    /// 添加告警通知器
+    pub fn add_notifier(&mut self, notifier: Box<dyn AlertNotifier>) {
+        self.alert_notifiers.push(notifier);
     }
 }
 
@@ -152,5 +251,39 @@ mod humantime_serde {
     {
         let s = String::deserialize(deserializer)?;
         humantime::parse_duration(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+// 示例通知器实现
+struct ConsoleNotifier;
+
+impl AlertNotifier for ConsoleNotifier {
+    fn notify(&self, alert: &Alert, state_change: bool) -> Result<(), String> {
+        if state_change {
+            println!("[ALERT] {} - {}: {} (value: {})
+Labels: {:?}
+Annotations: {:?}",
+                     alert.name,
+                     match alert.state {
+                         AlertState::Inactive => "RESOLVED",
+                         AlertState::Pending => "PENDING",
+                         AlertState::Firing => "FIRING",
+                     },
+                     alert.active_at.map(|t| {
+                         let duration = t.duration_since(UNIX_EPOCH).unwrap();
+                         format!("{}s ago", duration.as_secs())
+                     }).unwrap_or("N/A".to_string()),
+                     alert.value,
+                     alert.labels,
+                     alert.annotations);
+        }
+        Ok(())
+    }
+}
+
+impl AlertManager {
+    /// 添加控制台通知器
+    pub fn add_console_notifier(&mut self) {
+        self.add_notifier(Box::new(ConsoleNotifier));
     }
 }

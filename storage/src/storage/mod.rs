@@ -9,11 +9,9 @@ pub use gcs::{GcsStorage, GcsConfig};
 pub use local::LocalStorage;
 
 use crate::error::Result;
-use async_trait::async_trait;
 use bytes::Bytes;
 use std::collections::HashMap;
-use std::path::Path;
-use tracing::{info, debug};
+use tracing::info;
 
 /// 存储后端类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

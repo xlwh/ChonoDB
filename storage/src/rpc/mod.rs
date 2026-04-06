@@ -1,14 +1,13 @@
 use crate::error::{Error, Result};
-use crate::model::{Sample, TimeSeries, TimeSeriesId};
+use crate::model::{TimeSeries, TimeSeriesId};
 use async_trait::async_trait;
-use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tokio::sync::RwLock;
+use tracing::{debug, error, info};
 
 /// RPC请求类型
 #[derive(Debug, Clone, Serialize, Deserialize)]

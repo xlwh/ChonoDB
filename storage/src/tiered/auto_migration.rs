@@ -1,12 +1,11 @@
 use crate::error::{Error, Result};
 use crate::flush::BlockManager;
-use crate::tiered::{DataTier, TierConfig, TieredStorageConfig, AccessStats, DataLocation, TierCollection};
+use crate::tiered::{TieredStorageConfig, AccessStats, TierCollection};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 /// 自动迁移管理器
 pub struct AutoMigrationManager {
@@ -216,7 +215,7 @@ impl AutoMigrationManager {
         Ok(decisions)
     }
 
-    async fn get_block_current_tier(&self, block_id: u64) -> Result<String> {
+    async fn get_block_current_tier(&self, _block_id: u64) -> Result<String> {
         // 简化实现：根据块ID推断当前层
         // 实际实现应该查询元数据存储
         Ok("hot".to_string())
@@ -224,7 +223,7 @@ impl AutoMigrationManager {
 
     async fn find_blocks_to_evict(
         &self,
-        tier_name: &str,
+        _tier_name: &str,
         block_manager: &BlockManager,
         access_stats: &HashMap<u64, AccessStats>,
     ) -> Result<Vec<u64>> {

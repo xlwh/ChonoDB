@@ -1,12 +1,11 @@
 use crate::columnstore::DownsampleLevel;
-use crate::downsample::{DownsampleProcessor, DownsamplePoint, TaskBatch, TaskResult};
-use crate::downsample::task::{DownsampleTask, TaskStatus};
+use crate::downsample::{DownsampleProcessor, TaskResult};
 use crate::error::Result;
 use crate::memstore::MemStore;
-use crate::model::{Sample, TimeSeries, TimeSeriesId};
+use crate::model::TimeSeriesId;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{info, error, warn, debug};
+use tracing::{error, debug};
 
 /// 降采样工作器
 pub struct DownsampleWorker {

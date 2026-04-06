@@ -75,11 +75,18 @@ pub struct AlertInfo {
 /// 运行时信息
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeInfo {
-    pub start_time: i64,
-    pub goroutine_count: usize,
-    pub memory_alloc: u64,
-    pub memory_sys: u64,
-    pub gc_count: u32,
+    pub start_time: String,
+    pub cwd: String,
+    pub reload_config_success: bool,
+    pub last_config_time: Option<String>,
+    pub chunk_count: i64,
+    pub time_series_count: i64,
+    pub corruption_count: i64,
+    pub goroutine_count: i64,
+    pub go_max_procs: i64,
+    pub go_version: String,
+    pub go_arch: String,
+    pub go_os: String,
 }
 
 /// 构建信息

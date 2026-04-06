@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{info, debug, error};
+use tracing::{info, debug};
 
 /// 本地文件系统存储后端
 pub struct LocalStorage {
@@ -125,7 +125,7 @@ impl StorageBackend for LocalStorage {
         }
         
         let prefix_path = bucket_path.join(&prefix);
-        let prefix_str = prefix_path.to_string_lossy();
+        let _prefix_str = prefix_path.to_string_lossy();
         
         let mut entries = fs::read_dir(&bucket_path).await
             .map_err(|e| Error::Storage(format!("Failed to read directory: {}", e)))?;

@@ -1,5 +1,5 @@
-use crate::error::{Error, Result};
-use crate::wal::entry::{WalEntry, WalHeader, WAL_ENTRY_HEADER_SIZE};
+use crate::error::Result;
+use crate::wal::entry::{WalEntry, WalHeader};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -53,7 +53,7 @@ impl WalWriter {
 
     fn find_latest_segment(path: &Path) -> Result<(u64, u64)> {
         let mut latest_segment = 0u64;
-        let mut latest_sequence = 0u64;
+        let latest_sequence = 0u64;
         
         if path.exists() {
             for entry in fs::read_dir(path)? {

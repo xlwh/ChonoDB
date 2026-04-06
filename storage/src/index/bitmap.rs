@@ -1,4 +1,3 @@
-use crate::error::Result;
 use crate::model::TimeSeriesId;
 use std::collections::HashMap;
 
@@ -87,7 +86,7 @@ impl RoaringBitmap {
         result
     }
 
-    pub fn iter(&self) -> BitmapIterator {
+    pub fn iter(&self) -> BitmapIterator<'_> {
         BitmapIterator {
             bitmap: self,
             current_index: 0,
@@ -218,7 +217,7 @@ impl BitmapIndex {
         let mut total_bitmaps = 0;
         let mut total_series = 0;
         
-        for (name, values) in &self.index {
+        for (_name, values) in &self.index {
             total_bitmaps += values.len();
             for (_, bitmap) in values {
                 total_series += bitmap.cardinality();

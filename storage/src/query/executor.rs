@@ -460,7 +460,7 @@ impl QueryExecutor {
         Ok(result)
     }
     
-    fn aggregate_group(&self, op: &Function, group_key: Vec<(String, String)>, series: Vec<TimeSeries>, ctx: &ExecutionContext) -> Result<TimeSeries> {
+    fn aggregate_group(&self, op: &Function, group_key: Vec<(String, String)>, series: Vec<TimeSeries>, _ctx: &ExecutionContext) -> Result<TimeSeries> {
         use crate::query::parser::Function;
         
         // Create labels from group key
@@ -471,7 +471,7 @@ impl QueryExecutor {
         let mut result_ts = TimeSeries::new(0, labels);
         
         // Collect all samples from all series in the group
-        let mut all_samples: Vec<Sample> = series.iter()
+        let all_samples: Vec<Sample> = series.iter()
             .flat_map(|ts| ts.samples.clone())
             .collect();
         
@@ -1300,7 +1300,7 @@ impl QueryExecutor {
         let mut level = samples[0].value;
         let mut trend = samples[1].value - samples[0].value;
 
-        for (i, sample) in samples.iter().enumerate().skip(1) {
+        for (_i, sample) in samples.iter().enumerate().skip(1) {
             let prev_level = level;
             level = alpha * sample.value + (1.0 - alpha) * (level + trend);
             trend = beta * (level - prev_level) + (1.0 - beta) * trend;

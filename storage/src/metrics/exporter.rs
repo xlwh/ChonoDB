@@ -1,11 +1,10 @@
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::metrics::{Metric, MetricType, MetricValue, MetricsRegistry};
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::interval;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 
 /// Prometheus指标导出器
 pub struct PrometheusExporter {
@@ -59,7 +58,7 @@ impl PrometheusExporter {
 
     /// 收集系统指标
     async fn collect_system_metrics(&self) -> Result<()> {
-        let mut registry = self.registry.write().await;
+        let registry = self.registry.write().await;
 
         // CPU使用率
         if let Ok(cpu_usage) = self.get_cpu_usage() {

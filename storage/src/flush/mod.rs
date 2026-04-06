@@ -1,8 +1,6 @@
-use crate::columnstore::{BlockWriter, DownsampleLevel};
+use crate::columnstore::BlockWriter;
 use crate::error::{Error, Result};
-use crate::memstore::{HeadBlock, MemStore};
-use crate::model::{Sample, TimeSeries, TimeSeriesId};
-use crate::wal::Wal;
+use crate::memstore::MemStore;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -125,7 +123,7 @@ impl FlushManager {
         std::fs::create_dir_all(&block_dir)?;
         
         // Create block writer
-        let mut writer = BlockWriter::new(&block_dir, block_id, 3);
+        let writer = BlockWriter::new(&block_dir, block_id, 3);
         
         // Get all series from memstore and write to block
         // This is a placeholder - actual implementation would iterate through head block

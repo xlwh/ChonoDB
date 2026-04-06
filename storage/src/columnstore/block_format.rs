@@ -1,7 +1,6 @@
 use crate::error::Result;
 use crate::model::{Label, Sample};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use std::collections::HashMap;
 
 /// ChronoDB Block Format Version
 pub const BLOCK_FORMAT_VERSION: u8 = 1;
@@ -367,10 +366,10 @@ impl BlockReader {
 
         while offset < self.data.len() {
             let mut buf = &self.data[offset..];
-            let column_id = buf.get_u32();
+            let _column_id = buf.get_u32();
             let column_type = ColumnType::from(buf.get_u8());
-            let compression = CompressionType::from(buf.get_u8());
-            let uncompressed_size = buf.get_u64();
+            let _compression = CompressionType::from(buf.get_u8());
+            let _uncompressed_size = buf.get_u64();
             let data_size = buf.get_u64() as usize;
 
             if column_type == ColumnType::Timestamp {

@@ -1,10 +1,10 @@
 use crate::error::Result;
 use crate::model::TimeSeries;
 use crate::tiered::{TieredStorageConfig, TieredStorageStats, TieredQueryOptions, DataLocation};
-use crate::tiered::tier::{DataTier, TierCollection, TierConfig};
+use crate::tiered::tier::{DataTier, TierCollection};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, error, debug};
+use tracing::debug;
 
 pub struct TieredStorageManager {
     config: TieredStorageConfig,
@@ -46,7 +46,7 @@ impl TieredStorageManager {
     }
     
     pub async fn query(&self, series_id: u64, start: i64, end: i64, options: TieredQueryOptions) -> Result<Vec<TimeSeries>> {
-        let mut results = vec![];
+        let results = vec![];
         
         if options.query_all_tiers {
             for tier in self.tiers.get_all_tiers() {

@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::memstore::Chunk;
-use crate::model::{Label, Labels, Sample, TimeSeries, TimeSeriesId};
+use crate::model::{Labels, Sample, TimeSeriesId};
 use crate::index::InvertedIndex;
 use parking_lot::RwLock;
 use std::collections::HashMap;

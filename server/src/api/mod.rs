@@ -34,8 +34,8 @@ pub fn create_routes(state: Arc<ServerState>) -> Router {
         .route("/api/v1/alerts", get(handle_alerts))
 
         // Remote Write/Read API
-        .route("/api/v1/write", post(remote_server::receive_remote_write))
-        .route("/api/v1/read", post(remote_server::receive_remote_read))
+        .route("/api/v1/write", post(remote_server::handle_remote_write))
+        .route("/api/v1/read", post(remote_server::handle_remote_read))
 
         // 健康检查
         .route("/-/healthy", get(handle_healthy))

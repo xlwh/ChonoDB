@@ -1,11 +1,11 @@
-use crate::error::{Error, Result};
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
-use tokio::time::{interval, sleep};
-use tracing::{debug, error, info, warn};
+use tokio::time::interval;
+use tracing::{debug, info};
 
 /// Raft节点ID
 type NodeId = String;
@@ -137,7 +137,7 @@ pub struct RaftNode {
 impl RaftNode {
     pub fn new(config: RaftConfig) -> (Self, mpsc::Receiver<RaftMessage>) {
         let (tx, rx) = mpsc::channel(1000);
-        let node_id = config.node_id.clone();
+        let _node_id = config.node_id.clone();
         let peers = config.peers.clone();
 
         let node = Self {
@@ -240,7 +240,7 @@ impl RaftNode {
             last_log_term,
         };
 
-        let message = RaftMessage::RequestVote(args);
+        let _message = RaftMessage::RequestVote(args);
 
         // Send vote requests to all peers
         for peer in &self.config.peers {
@@ -292,7 +292,7 @@ impl RaftNode {
                 leader_commit: commit_index,
             };
 
-            let message = RaftMessage::AppendEntries(args);
+            let _message = RaftMessage::AppendEntries(args);
             debug!("Sending heartbeat to {}", peer);
             // In a real implementation, this would send the message over the network
         }
@@ -327,7 +327,7 @@ impl RaftNode {
 
         if args.term < *current_term {
             // Reject vote
-            let reply = RequestVoteReply {
+            let _reply = RequestVoteReply {
                 term: *current_term,
                 vote_granted: false,
             };
@@ -361,7 +361,7 @@ impl RaftNode {
                 *voted_for = Some(args.candidate_id.clone());
                 drop(voted_for);
 
-                let reply = RequestVoteReply {
+                let _reply = RequestVoteReply {
                     term: *current_term,
                     vote_granted: true,
                 };
@@ -419,7 +419,7 @@ impl RaftNode {
         let mut current_term = self.current_term.write().await;
 
         if args.term < *current_term {
-            let reply = AppendEntriesReply {
+            let _reply = AppendEntriesReply {
                 term: *current_term,
                 success: false,
                 match_index: 0,
@@ -447,7 +447,7 @@ impl RaftNode {
         let mut log = self.log.write().await;
         if args.prev_log_index > 0 {
             if args.prev_log_index > log.len() as u64 {
-                let reply = AppendEntriesReply {
+                let _reply = AppendEntriesReply {
                     term: args.term,
                     success: false,
                     match_index: 0,
@@ -461,7 +461,7 @@ impl RaftNode {
                 if entry.term != args.prev_log_term {
                     // Log inconsistency, truncate log
                     log.truncate((args.prev_log_index - 1) as usize);
-                    let reply = AppendEntriesReply {
+                    let _reply = AppendEntriesReply {
                         term: args.term,
                         success: false,
                         match_index: 0,
@@ -499,7 +499,7 @@ impl RaftNode {
 
         drop(log);
 
-        let reply = AppendEntriesReply {
+        let _reply = AppendEntriesReply {
             term: args.term,
             success: true,
             match_index: args.prev_log_index + entries_count,
@@ -524,13 +524,13 @@ impl RaftNode {
 
         if reply.success {
             // Update next_index and match_index
-            let mut next_index = self.next_index.write().await;
-            let mut match_index = self.match_index.write().await;
+            let mut _next_index = self.next_index.write().await;
+            let mut _match_index = self.match_index.write().await;
             // Update for the specific peer
             // In a real implementation, track which peer sent the response
         } else {
             // Decrement next_index and retry
-            let mut next_index = self.next_index.write().await;
+            let mut _next_index = self.next_index.write().await;
             // Decrement for the specific peer
         }
 
@@ -565,7 +565,7 @@ impl RaftNode {
 
         if *state != RaftState::Leader {
             // Redirect to leader
-            let reply = ClientResponseReply {
+            let _reply = ClientResponseReply {
                 success: false,
                 leader_id: None, // Would need to track leader
                 result: None,

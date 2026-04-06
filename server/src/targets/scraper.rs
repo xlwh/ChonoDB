@@ -1,8 +1,9 @@
-use super::{Target, TargetHealth};
+use super::Target;
 use std::time::Duration;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
 /// 抓取器
+#[derive(Clone)]
 pub struct Scraper {
     client: reqwest::Client,
 }

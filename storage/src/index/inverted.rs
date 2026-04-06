@@ -2,7 +2,7 @@ use crate::error::Result;
 use crate::model::{Label, TimeSeriesId};
 use dashmap::DashMap;
 use parking_lot::RwLock;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 #[derive(Debug)]
 pub struct InvertedIndex {

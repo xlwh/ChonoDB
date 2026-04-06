@@ -1,6 +1,5 @@
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::Path;
 
 /// ChronoDB YAML配置文件

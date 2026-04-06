@@ -2,7 +2,7 @@ use axum::serve;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tracing::{info, error};
+use tracing::info;
 
 use crate::api::create_routes;
 use crate::config::ServerConfig;

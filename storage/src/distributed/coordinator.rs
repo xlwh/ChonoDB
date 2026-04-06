@@ -3,7 +3,7 @@ use crate::query::planner::QueryPlan;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, debug};
+use tracing::info;
 
 /// 协调器配置
 #[derive(Debug, Clone)]

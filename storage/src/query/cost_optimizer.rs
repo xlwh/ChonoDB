@@ -1,10 +1,9 @@
 use crate::error::{Error, Result};
-use crate::model::{TimeSeries, TimeSeriesId};
-use crate::query::{QueryPlan, QueryResult};
-use crate::query::planner::{PlanType, VectorQueryPlan, MatrixQueryPlan, CallPlan, BinaryExprPlan, UnaryExprPlan, AggregationPlan};
+use crate::query::QueryPlan;
+use crate::query::planner::PlanType;
 use crate::query::parser::Function;
 use std::collections::HashMap;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// 基于成本的查询优化器
 pub struct CostBasedOptimizer {
@@ -315,12 +314,12 @@ impl CostBasedOptimizer {
     /// 估计计划成本
     fn estimate_cost(&self, plan_type: &PlanType, cost_model: &CostModel) -> Result<f64> {
         match plan_type {
-            PlanType::VectorQuery(vq) => {
+            PlanType::VectorQuery(_vq) => {
                 // 估计向量查询成本
                 let row_count = 1000; // 从统计信息获取
                 Ok(cost_model.calculate_table_scan_cost(row_count))
             }
-            PlanType::MatrixQuery(mq) => {
+            PlanType::MatrixQuery(_mq) => {
                 // 估计矩阵查询成本
                 let row_count = 1000;
                 Ok(cost_model.calculate_table_scan_cost(row_count))
