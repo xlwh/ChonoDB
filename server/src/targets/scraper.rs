@@ -3,6 +3,7 @@ use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 /// 抓取器
+#[derive(Clone)]
 pub struct Scraper {
     client: reqwest::Client,
 }

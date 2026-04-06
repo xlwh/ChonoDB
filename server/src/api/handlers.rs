@@ -1,3 +1,4 @@
+use chronodb_storage::model::{Sample, TimeSeries};
 use axum::{
     extract::{Query, State},
     response::Json,
@@ -36,25 +37,26 @@ pub async fn handle_query(
     // 使用内存存储查询数据
     let result = match state.memstore.query(&label_matchers, time - 1000, time) {
         Ok(series) => {
-            let samples: Vec<Sample> = series.into_iter()
+            let instant_vectors: Vec<InstantVector> = series.into_iter()
                 .flat_map(|ts| {
-                    ts.samples.into_iter().map(|s| {
-                        Sample {
-                            metric: ts.labels.into_iter()
-                                .map(|label| (label.name, label.value))
-                                .collect(),
-                            value: s.value,
-                            timestamp: s.timestamp,
+                    let mut metric = serde_json::Map::new();
+                    for label in &ts.labels {
+                        metric.insert(label.name.clone(), serde_json::Value::String(label.value.clone()));
+                    }
+                    ts.samples.into_iter().map(move |s| {
+                        InstantVector {
+                            metric: metric.clone(),
+                            value: (s.timestamp as f64 / 1000.0, s.value.to_string()),
                         }
                     })
                 })
                 .collect();
-            QueryResult::Vector(samples)
+            QueryResult::Vector(instant_vectors)
         },
         Err(e) => {
             return Json(ApiResponse::error(
                 "execution",
-                format!("Query execution failed: {:?}", e),
+                &format!("Query execution failed: {:?}", e),
             ));
         }
     };
@@ -63,7 +65,7 @@ pub async fn handle_query(
 }
 
 /// 简单的标签匹配解析
-fn parse_label_matchers(query: &str) -> Vec<(String, String)> {
+pub fn parse_label_matchers(query: &str) -> Vec<(String, String)> {
     // 这里只是一个简单的实现，实际项目中需要使用PromQL解析器
     let mut matchers = Vec::new();
     
@@ -133,25 +135,27 @@ pub async fn handle_query_range(
     // 使用内存存储查询数据
     let result = match state.memstore.query(&label_matchers, start, end) {
         Ok(series) => {
-            let matrices: Vec<Matrix> = series.into_iter()
+            let range_vectors: Vec<RangeVector> = series.into_iter()
                 .map(|ts| {
-                    let values: Vec<(i64, f64)> = ts.samples.into_iter()
-                        .map(|s| (s.timestamp, s.value))
+                    let values: Vec<(f64, String)> = ts.samples.into_iter()
+                        .map(|s| (s.timestamp as f64 / 1000.0, s.value.to_string()))
                         .collect();
-                    Matrix {
-                        metric: ts.labels.into_iter()
-                            .map(|label| (label.name, label.value))
-                            .collect(),
+                    let mut metric = serde_json::Map::new();
+                    for label in ts.labels {
+                        metric.insert(label.name, serde_json::Value::String(label.value));
+                    }
+                    RangeVector {
+                        metric,
                         values,
                     }
                 })
                 .collect();
-            QueryResult::Matrix(matrices)
+            QueryResult::Matrix(range_vectors)
         },
         Err(e) => {
             return Json(ApiResponse::error(
                 "execution",
-                format!("Query execution failed: {:?}", e),
+                &format!("Query execution failed: {:?}", e),
             ));
         }
     };
@@ -188,9 +192,13 @@ pub async fn handle_series(
         if let Ok(series) = state.memstore.query(&label_matchers, start, end) {
             let api_series: Vec<Series> = series.into_iter()
                 .map(|ts| {
-                    ts.labels.into_iter()
-                        .map(|label| (label.name, label.value))
-                        .collect()
+                    let mut labels = serde_json::Map::new();
+                    for label in ts.labels {
+                        labels.insert(label.name, serde_json::Value::String(label.value));
+                    }
+                    Series {
+                        labels,
+                    }
                 })
                 .collect();
             all_series.extend(api_series);

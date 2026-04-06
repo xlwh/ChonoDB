@@ -1,6 +1,6 @@
 use crate::error::{Error, Result};
 use crate::model::TimeSeries;
-use crate::rpc::{ClusterRpcManager, ReplicationRequest, ReplicationResponse};
+use crate::rpc::{ClusterRpcManager, ReplicateRequest, ReplicateResponse};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -54,8 +54,8 @@ pub struct ReplicationManager {
     config: ReplicationConfig,
     replication_log: Arc<RwLock<VecDeque<ReplicationEntry>>>,
     replication_queue: Arc<RwLock<VecDeque<ReplicationTask>>>,
-    rpc_manager: Option<Arc<ClusterRpcManager>>,
-    replication_workers: Vec<tokio::task::JoinHandle<()>>,
+    rpc_manager: Arc<RwLock<Option<Arc<ClusterRpcManager>>>>,
+    replication_workers: Arc<RwLock<Vec<tokio::task::JoinHandle<()>>>>,
     semaphore: Arc<Semaphore>,
     metrics: Arc<RwLock<ReplicationMetrics>>,
 }
@@ -101,21 +101,23 @@ impl ReplicationManager {
             config,
             replication_log: Arc::new(RwLock::new(VecDeque::new())),
             replication_queue: Arc::new(RwLock::new(VecDeque::new())),
-            rpc_manager: None,
-            replication_workers: Vec::new(),
+            rpc_manager: Arc::new(RwLock::new(None)),
+            replication_workers: Arc::new(RwLock::new(Vec::new())),
             semaphore: Arc::new(Semaphore::new(100)), // 限制并发复制数
             metrics: Arc::new(RwLock::new(ReplicationMetrics::default())),
         }
     }
 
-    pub async fn start(&mut self, rpc_manager: Arc<ClusterRpcManager>) -> Result<()> {
+    pub async fn start(&self, rpc_manager: Arc<ClusterRpcManager>) -> Result<()> {
         info!("Starting replication manager");
-        self.rpc_manager = Some(rpc_manager);
+        let mut rpc_manager_write = self.rpc_manager.write().await;
+        *rpc_manager_write = Some(rpc_manager);
         
         // 启动复制工作线程
+        let mut replication_workers_write = self.replication_workers.write().await;
         for i in 0..5 { // 5个工作线程
             let worker = self.start_replication_worker(i).await;
-            self.replication_workers.push(worker);
+            replication_workers_write.push(worker);
         }
         
         // 启动复制日志清理任务
@@ -127,7 +129,7 @@ impl ReplicationManager {
     /// 启动复制工作线程
     async fn start_replication_worker(&self, worker_id: usize) -> tokio::task::JoinHandle<()> {
         let replication_queue = self.replication_queue.clone();
-        let rpc_manager = self.rpc_manager.as_ref().unwrap().clone();
+        let rpc_manager = self.rpc_manager.clone();
         let config = self.config.clone();
         let metrics = self.metrics.clone();
         let semaphore = self.semaphore.clone();
@@ -148,7 +150,54 @@ impl ReplicationManager {
                     let start_time = SystemTime::now();
                     
                     // 执行复制
-                    match self.execute_replication(&rpc_manager, &task, &config).await {
+                    let result = async {
+                        let mut success_count = 0;
+                        
+                        // 获取RPC管理器
+                        let rpc_manager_read = rpc_manager.read().await;
+                        let rpc_manager_ref = rpc_manager_read.as_ref().unwrap();
+                        
+                        for node in &task.target_nodes {
+                            // 获取RPC客户端
+                            let client = match rpc_manager_ref.get_client(node).await {
+                                Some(client) => client,
+                                None => {
+                                    warn!("No RPC client for node {} in replication worker {}", node, worker_id);
+                                    continue;
+                                }
+                            };
+                            
+                            // 构建复制请求
+                            let request = ReplicateRequest {
+                                shard_id: task.shard_id,
+                                series: task.series.clone(),
+                            };
+                            
+                            // 发送复制请求
+                            let response = tokio::time::timeout(
+                                Duration::from_millis(config.replication_timeout_ms),
+                                client.replicate(task.shard_id, task.series.clone())
+                            ).await
+                            .map_err(|_| Error::Internal("Replication timeout".to_string()))?
+                            .map_err(|e| Error::Internal(format!("Replication failed: {}", e)))?;
+                            
+                            if response.success {
+                                success_count += 1;
+                            }
+                        }
+                        
+                        // 检查是否满足最小写入副本数
+                        if success_count < config.min_write_replicas {
+                            return Err(Error::Internal(
+                                format!("Only {} replicas written, minimum required: {}", 
+                                    success_count, config.min_write_replicas)
+                            ));
+                        }
+                        
+                        Ok(())
+                    }.await;
+                    
+                    match result {
                         Ok(_) => {
                             let mut metrics_write = metrics.write().await;
                             metrics_write.successful_replications += 1;
@@ -185,7 +234,7 @@ impl ReplicationManager {
         let replication_log = self.replication_log.clone();
         
         tokio::spawn(async move {
-            let mut interval = interval(Duration::from_minutes(5));
+            let mut interval = interval(Duration::from_mins(5));
             
             loop {
                 interval.tick().await;
@@ -243,7 +292,7 @@ impl ReplicationManager {
             .ok_or_else(|| Error::Internal(format!("No RPC client for node {}", node_id)))?;
         
         // 构建复制请求
-        let request = ReplicationRequest {
+        let request = ReplicateRequest {
             shard_id: 0, // 暂时设为0，实际应该从任务中获取
             series: series.clone(),
         };
@@ -251,7 +300,7 @@ impl ReplicationManager {
         // 发送复制请求
         let response = tokio::time::timeout(
             Duration::from_millis(config.replication_timeout_ms),
-            client.replicate(request)
+            client.replicate(0, series.clone())
         ).await
         .map_err(|_| Error::Internal("Replication timeout".to_string()))?
         .map_err(|e| Error::Internal(format!("Replication failed: {}", e)))?;
@@ -280,7 +329,7 @@ impl ReplicationManager {
             // 异步复制：加入队列
             let task = ReplicationTask {
                 shard_id,
-                series,
+                series: series.clone(),
                 target_nodes: target_nodes.to_vec(),
                 retry_count: 0,
                 max_retries: 3,
@@ -294,10 +343,10 @@ impl ReplicationManager {
             }
         } else {
             // 同步复制：立即执行
-            if let Some(rpc_manager) = &self.rpc_manager {
+            if let Some(rpc_manager) = &*self.rpc_manager.read().await {
                 let task = ReplicationTask {
                     shard_id,
-                    series,
+                    series: series.clone(),
                     target_nodes: target_nodes.to_vec(),
                     retry_count: 0,
                     max_retries: 3,
@@ -346,7 +395,8 @@ impl ReplicationManager {
 
     /// 停止复制管理器
     pub async fn stop(&mut self) -> Result<()> {
-        for worker in self.replication_workers.drain(..) {
+        let mut workers = self.replication_workers.write().await;
+        for worker in workers.drain(..) {
             worker.abort();
         }
         Ok(())

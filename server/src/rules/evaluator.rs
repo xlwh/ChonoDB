@@ -76,9 +76,11 @@ impl RuleEvaluator {
                 // 根据告警条件检查值
                 let is_firing = match rule.condition {
                     super::alerting::AlertCondition::Gt(threshold) => sample.value > threshold,
-                    super::alerting::AlertCondition::Lt(threshold) => sample.value < threshold,
                     super::alerting::AlertCondition::Gte(threshold) => sample.value >= threshold,
+                    super::alerting::AlertCondition::Lt(threshold) => sample.value < threshold,
                     super::alerting::AlertCondition::Lte(threshold) => sample.value <= threshold,
+                    super::alerting::AlertCondition::Eq(threshold) => sample.value == threshold,
+                    super::alerting::AlertCondition::Ne(threshold) => sample.value != threshold,
                 };
                 
                 if is_firing {
@@ -86,7 +88,7 @@ impl RuleEvaluator {
                     let mut alert_manager = self.alert_manager.write().await;
                     alert_manager.create_alert(
                         rule.name.clone(),
-                        ts.labels,
+                        ts.labels.clone(),
                         sample.value,
                         now,
                         rule.annotations.clone(),

@@ -531,7 +531,7 @@ impl MigrationTool {
                 if path.extension().map(|ext| ext == "wal").unwrap_or(false) {
                     wal_files += 1;
                     // 尝试解析WAL文件
-                    if let Ok((series_count, samples_count)) = self::parse_prometheus_wal(path, &store, start_time, end_time) {
+                    if let Ok((series_count, samples_count)) = self::parse_prometheus_wal(&path, &store, start_time, end_time) {
                         total_series += series_count;
                         total_samples += samples_count;
                     }
@@ -669,7 +669,7 @@ fn parse_prometheus_wal(
         .as_millis() as i64;
     
     let samples: Vec<Sample> = (0..5)
-        .map(|i| Sample::new(now - i * 1000, (i * 0.1) as f64))
+        .map(|i| Sample::new(now - i * 1000, (i as f64 * 0.1) as f64))
         .collect();
     
     // 写入到ChronoDB

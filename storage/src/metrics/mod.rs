@@ -181,9 +181,9 @@ impl MetricsRegistry {
                         output.push_str(&format!("{}_bucket{}{} {}{}\n", metric.name, bucket_labels, labels_str, count, timestamp_str));
                     }
                     // 输出总和
-                    output.push_str(&format!("{}_sum{}{} 0{}\n", metric.name, labels_str, timestamp_str));
+                    output.push_str(&format!("{}_sum{}{} 0\n", metric.name, labels_str, timestamp_str));
                     // 输出计数
-                    output.push_str(&format!("{}_count{}{} 0{}\n", metric.name, labels_str, timestamp_str));
+                    output.push_str(&format!("{}_count{}{} 0\n", metric.name, labels_str, timestamp_str));
                 }
                 MetricValue::Summary { sum, count, quantiles } => {
                     // 输出各分位数
@@ -195,9 +195,9 @@ impl MetricsRegistry {
                         output.push_str(&format!("{}{} {}{}\n", metric.name, quantile_labels, value, timestamp_str));
                     }
                     // 输出总和
-                    output.push_str(&format!("{}_sum{}{} {}{}\n", metric.name, labels_str, sum, timestamp_str));
+                    output.push_str(&format!("{}_sum{}{} {}\n", metric.name, labels_str, sum, timestamp_str));
                     // 输出计数
-                    output.push_str(&format!("{}_count{}{} {}{}\n", metric.name, labels_str, count, timestamp_str));
+                    output.push_str(&format!("{}_count{}{} {}\n", metric.name, labels_str, count, timestamp_str));
                 }
             }
         }
@@ -331,7 +331,10 @@ impl StorageMetricsCollector {
         latency.push(latency_ms);
         // 只保留最近1000个值
         if latency.len() > 1000 {
-            latency.drain(0..latency.len() - 1000);
+            let len = latency.len();
+            if len > 1000 {
+                latency.drain(0..len - 1000);
+            }
         }
     }
 
@@ -341,7 +344,10 @@ impl StorageMetricsCollector {
         latency.push(latency_ms);
         // 只保留最近1000个值
         if latency.len() > 1000 {
-            latency.drain(0..latency.len() - 1000);
+            let len = latency.len();
+            if len > 1000 {
+                latency.drain(0..len - 1000);
+            }
         }
     }
 
@@ -396,9 +402,9 @@ impl StorageMetricsCollector {
     pub async fn add_default_alert_rules(&self) {
         // 系列数量告警
         self.registry.add_alert_rule(AlertRule {
-            name: "HighSeriesCount",
-            expr: "chronodb_series_total > 1000000",
-            for_duration: Duration::from_minutes(5),
+            name: "HighSeriesCount".to_string(),
+            expr: "chronodb_series_total > 1000000".to_string(),
+            for_duration: Duration::from_mins(5),
             labels: HashMap::from([("severity".to_string(), "warning".to_string())]),
             annotations: HashMap::from([
                 ("summary".to_string(), "High series count".to_string()),
@@ -408,9 +414,9 @@ impl StorageMetricsCollector {
 
         // 查询延迟告警
         self.registry.add_alert_rule(AlertRule {
-            name: "HighQueryLatency",
-            expr: "chronodb_query_latency_ms > 1000",
-            for_duration: Duration::from_minutes(5),
+            name: "HighQueryLatency".to_string(),
+            expr: "chronodb_query_latency_ms > 1000".to_string(),
+            for_duration: Duration::from_mins(5),
             labels: HashMap::from([("severity".to_string(), "warning".to_string())]),
             annotations: HashMap::from([
                 ("summary".to_string(), "High query latency".to_string()),
@@ -420,9 +426,9 @@ impl StorageMetricsCollector {
 
         // 节点健康告警
         self.registry.add_alert_rule(AlertRule {
-            name: "ClusterNodeDown",
-            expr: "chronodb_cluster_healthy_nodes_total < chronodb_cluster_nodes_total",
-            for_duration: Duration::from_minutes(2),
+            name: "ClusterNodeDown".to_string(),
+            expr: "chronodb_cluster_healthy_nodes_total < chronodb_cluster_nodes_total".to_string(),
+            for_duration: Duration::from_mins(2),
             labels: HashMap::from([("severity".to_string(), "critical".to_string())]),
             annotations: HashMap::from([
                 ("summary".to_string(), "Cluster node down".to_string()),

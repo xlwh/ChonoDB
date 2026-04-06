@@ -94,7 +94,7 @@ pub struct AlertManager {
 }
 
 /// 告警通知接口
-pub trait AlertNotifier {
+pub trait AlertNotifier: Send + Sync {
     fn notify(&self, alert: &Alert, state_change: bool) -> Result<(), String>;
 }
 

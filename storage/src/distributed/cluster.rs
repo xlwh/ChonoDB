@@ -58,8 +58,8 @@ pub struct ClusterManager {
     config: ClusterConfig,
     nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
     leader_id: Arc<RwLock<Option<String>>>,
-    discovery_task: Option<tokio::task::JoinHandle<()>>,
-    heartbeat_task: Option<tokio::task::JoinHandle<()>>,
+    discovery_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
+    heartbeat_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl ClusterManager {
@@ -68,12 +68,12 @@ impl ClusterManager {
             config,
             nodes: Arc::new(RwLock::new(HashMap::new())),
             leader_id: Arc::new(RwLock::new(None)),
-            discovery_task: None,
-            heartbeat_task: None,
+            discovery_task: Arc::new(RwLock::new(None)),
+            heartbeat_task: Arc::new(RwLock::new(None)),
         }
     }
 
-    pub async fn start(&mut self) -> Result<()> {
+    pub async fn start(&self) -> Result<()> {
         info!("Starting cluster manager for cluster: {}", self.config.cluster_name);
         
         // 启动节点发现任务
@@ -88,7 +88,7 @@ impl ClusterManager {
     }
 
     /// 启动节点发现任务
-    async fn start_discovery_task(&mut self) -> Result<()> {
+    async fn start_discovery_task(&self) -> Result<()> {
         let discovery_addresses = self.config.discovery_addresses.clone();
         let nodes = self.nodes.clone();
         
@@ -106,12 +106,13 @@ impl ClusterManager {
             }
         });
         
-        self.discovery_task = Some(handle);
+        let mut discovery_task_write = self.discovery_task.write().await;
+        *discovery_task_write = Some(handle);
         Ok(())
     }
 
     /// 启动心跳检测任务
-    async fn start_heartbeat_task(&mut self) -> Result<()> {
+    async fn start_heartbeat_task(&self) -> Result<()> {
         let config = self.config.clone();
         let nodes = self.nodes.clone();
         let leader_id = self.leader_id.clone();
@@ -126,19 +127,35 @@ impl ClusterManager {
                 let mut nodes_write = nodes.write().await;
                 
                 // 检查节点心跳
-                let mut to_remove = Vec::new();
+                let mut to_remove: Vec<String> = Vec::new();
+                let mut to_mark_offline: Vec<String> = Vec::new();
+                let mut leader_timed_out = false;
+                
                 for (node_id, node) in &*nodes_write {
                     if now - node.last_heartbeat > config.node_timeout_ms as i64 {
                         warn!("Node {} timed out, marking as offline", node_id);
-                        nodes_write.get_mut(node_id).unwrap().status = NodeStatus::Offline;
+                        to_mark_offline.push(node_id.clone());
                         
                         // 如果超时节点是领导者，重新选举
                         if node.is_leader {
                             info!("Leader node {} timed out, starting re-election", node_id);
-                            *leader_id.write().await = None;
+                            leader_timed_out = true;
                             // 这里应该触发领导者选举
                         }
+                        
+                        // 添加到移除列表
+                        to_remove.push(node_id.clone());
                     }
+                }
+                
+                // 标记节点为离线
+                for node_id in &to_mark_offline {
+                    nodes_write.get_mut(node_id).unwrap().status = NodeStatus::Offline;
+                }
+                
+                // 处理领导者超时
+                if leader_timed_out {
+                    *leader_id.write().await = None;
                 }
                 
                 // 移除离线节点
@@ -149,7 +166,8 @@ impl ClusterManager {
             }
         });
         
-        self.heartbeat_task = Some(handle);
+        let mut heartbeat_task_write = self.heartbeat_task.write().await;
+        *heartbeat_task_write = Some(handle);
         Ok(())
     }
 
@@ -204,7 +222,7 @@ impl ClusterManager {
         info!("Node removed: {}", node_id);
         
         // 检查是否需要重新选举领导者
-        if let Some(leader) = *self.leader_id.read().await {
+        if let Some(leader) = self.leader_id.read().await.as_ref() {
             if leader == node_id {
                 info!("Leader node {} removed, starting re-election", node_id);
                 *self.leader_id.write().await = None;
@@ -217,7 +235,7 @@ impl ClusterManager {
 
     /// 检查领导者选举
     async fn check_leader_election(&self) -> Result<()> {
-        let leader = *self.leader_id.read().await;
+        let leader = self.leader_id.read().await.clone();
         if leader.is_none() {
             // 执行领导者选举
             self.elect_leader().await?;
@@ -252,9 +270,9 @@ impl ClusterManager {
 
     /// 获取领导者节点
     pub async fn get_leader(&self) -> Result<Option<NodeInfo>> {
-        if let Some(leader_id) = *self.leader_id.read().await {
+        if let Some(leader_id) = self.leader_id.read().await.as_ref() {
             let nodes = self.nodes.read().await;
-            if let Some(leader) = nodes.get(&leader_id) {
+            if let Some(leader) = nodes.get(leader_id) {
                 return Ok(Some(leader.clone()));
             }
         }
@@ -262,11 +280,16 @@ impl ClusterManager {
     }
 
     /// 停止集群管理器
-    pub async fn stop(&mut self) -> Result<()> {
-        if let Some(task) = self.discovery_task.take() {
+    pub async fn stop(&self) -> Result<()> {
+        // 停止发现任务
+        let mut discovery_task_write = self.discovery_task.write().await;
+        if let Some(task) = discovery_task_write.take() {
             task.abort();
         }
-        if let Some(task) = self.heartbeat_task.take() {
+        
+        // 停止心跳任务
+        let mut heartbeat_task_write = self.heartbeat_task.write().await;
+        if let Some(task) = heartbeat_task_write.take() {
             task.abort();
         }
         Ok(())

@@ -198,12 +198,13 @@ impl QueryCoordinator {
         shard_manager: Arc<RwLock<ShardManager>>,
         config: CoordinatorConfig,
     ) -> Self {
+        let max_concurrent_queries = config.max_concurrent_queries;
         Self {
             rpc_manager,
             shard_manager,
             config,
             query_cache: Arc::new(RwLock::new(HashMap::new())),
-            semaphore: Arc::new(Semaphore::new(config.max_concurrent_queries)),
+            semaphore: Arc::new(Semaphore::new(max_concurrent_queries)),
             stats: Arc::new(RwLock::new(QueryStats::default())),
         }
     }
@@ -270,8 +271,8 @@ impl QueryCoordinator {
         let mut cache = self.query_cache.write().await;
         // 如果缓存已满，移除最旧的项
         if cache.len() >= self.config.query_cache_size {
-            if let Some((old_key, _)) = cache.iter().min_by_key(|(_, (_, t))| t) {
-                cache.remove(old_key);
+            if let Some(old_key) = cache.iter().min_by_key(|(_, (_, t))| t).map(|(k, _)| k.clone()) {
+                cache.remove(&old_key);
             }
         }
         cache.insert(key, (result, SystemTime::now()));

@@ -60,6 +60,7 @@ pub struct DistributedStorage {
     coordinator: Option<Arc<Coordinator>>,
     replication_manager: Arc<ReplicationManager>,
     cluster_manager: Arc<ClusterManager>,
+    rpc_manager: Arc<super::rpc::ClusterRpcManager>,
 }
 
 impl DistributedStorage {
@@ -67,6 +68,7 @@ impl DistributedStorage {
         let shard_manager = Arc::new(ShardManager::new(config.shard_config.clone()));
         let replication_manager = Arc::new(ReplicationManager::new(config.replication_config.clone()));
         let cluster_manager = Arc::new(ClusterManager::new(config.cluster_config.clone()));
+        let rpc_manager = Arc::new(super::rpc::ClusterRpcManager::new());
         
         let coordinator = if config.is_coordinator {
             Some(Arc::new(Coordinator::new(CoordinatorConfig::default())))
@@ -80,6 +82,7 @@ impl DistributedStorage {
             coordinator,
             replication_manager,
             cluster_manager,
+            rpc_manager,
         })
     }
     
@@ -94,7 +97,7 @@ impl DistributedStorage {
         self.shard_manager.start().await?;
         
         // 启动副本管理
-        self.replication_manager.start().await?;
+        self.replication_manager.start(self.rpc_manager.clone()).await?;
         
         // 如果是协调器，启动协调服务
         if let Some(coordinator) = &self.coordinator {
