@@ -34,7 +34,7 @@ COPY chronodb-cli/src chronodb-cli/src/
 RUN cargo build --release
 
 # 运行阶段
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS runtime
 
 WORKDIR /app
 
@@ -42,6 +42,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # 创建用户和目录
@@ -55,6 +56,9 @@ COPY --from=builder /app/target/release/chronodb /usr/local/bin/chronodb
 
 # 复制默认配置
 COPY config/chronodb.yaml /etc/chronodb/
+
+# 复制监控配置
+COPY config/prometheus.yml /etc/chronodb/
 
 # 设置权限
 RUN chmod +x /usr/local/bin/chronodb-server /usr/local/bin/chronodb
@@ -70,7 +74,7 @@ VOLUME ["/var/lib/chronodb", "/var/log/chronodb"]
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD chronodb-server --version || exit 1
+    CMD curl -f http://localhost:9090/-/healthy || exit 1
 
 # 启动命令
 ENTRYPOINT ["chronodb-server"]

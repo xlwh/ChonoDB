@@ -2,6 +2,7 @@ use axum::{
     extract::{Query, State},
     response::Json,
 };
+use chrono;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -23,9 +24,71 @@ pub async fn handle_query(
         }
     };
 
-    // TODO: 实现实际查询逻辑
-    let result = QueryResult::Vector(vec![]);
+    // 解析时间参数
+    let time = params.get("time")
+        .and_then(|t| t.parse::<f64>().ok())
+        .map(|t| (t * 1000.0) as i64)
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+
+    // 简单的标签匹配解析（实际项目中需要更复杂的PromQL解析）
+    let label_matchers = parse_label_matchers(query);
+
+    // 使用内存存储查询数据
+    let result = match state.memstore.query(&label_matchers, time - 1000, time) {
+        Ok(series) => {
+            let samples: Vec<Sample> = series.into_iter()
+                .flat_map(|ts| {
+                    ts.samples.into_iter().map(|s| {
+                        Sample {
+                            metric: ts.labels.into_iter()
+                                .map(|label| (label.name, label.value))
+                                .collect(),
+                            value: s.value,
+                            timestamp: s.timestamp,
+                        }
+                    })
+                })
+                .collect();
+            QueryResult::Vector(samples)
+        },
+        Err(e) => {
+            return Json(ApiResponse::error(
+                "execution",
+                format!("Query execution failed: {:?}", e),
+            ));
+        }
+    };
+
     Json(ApiResponse::success(result))
+}
+
+/// 简单的标签匹配解析
+fn parse_label_matchers(query: &str) -> Vec<(String, String)> {
+    // 这里只是一个简单的实现，实际项目中需要使用PromQL解析器
+    let mut matchers = Vec::new();
+    
+    // 如果查询是简单的指标名
+    if !query.contains('{') && !query.contains('}') {
+        matchers.push(("__name__".to_string(), query.to_string()));
+        return matchers;
+    }
+    
+    // 简单解析标签匹配
+    if let Some(start) = query.find('{') {
+        if let Some(end) = query.find('}') {
+            let labels_str = &query[start+1..end];
+            for label in labels_str.split(',') {
+                let parts: Vec<&str> = label.split('=').collect();
+                if parts.len() == 2 {
+                    let name = parts[0].trim().to_string();
+                    let value = parts[1].trim().trim_matches('"').to_string();
+                    matchers.push((name, value));
+                }
+            }
+        }
+    }
+    
+    matchers
 }
 
 /// 处理范围查询
@@ -43,8 +106,56 @@ pub async fn handle_query_range(
         }
     };
 
-    // TODO: 实现实际范围查询逻辑
-    let result = QueryResult::Matrix(vec![]);
+    // 解析时间参数
+    let start = match params.get("start") {
+        Some(s) => s.parse::<f64>().ok().map(|t| (t * 1000.0) as i64),
+        None => None,
+    };
+
+    let end = match params.get("end") {
+        Some(e) => e.parse::<f64>().ok().map(|t| (t * 1000.0) as i64),
+        None => None,
+    };
+
+    let (start, end) = match (start, end) {
+        (Some(s), Some(e)) => (s, e),
+        _ => {
+            return Json(ApiResponse::error(
+                "bad_data",
+                "Parameters 'start' and 'end' are required",
+            ));
+        }
+    };
+
+    // 解析标签匹配
+    let label_matchers = parse_label_matchers(query);
+
+    // 使用内存存储查询数据
+    let result = match state.memstore.query(&label_matchers, start, end) {
+        Ok(series) => {
+            let matrices: Vec<Matrix> = series.into_iter()
+                .map(|ts| {
+                    let values: Vec<(i64, f64)> = ts.samples.into_iter()
+                        .map(|s| (s.timestamp, s.value))
+                        .collect();
+                    Matrix {
+                        metric: ts.labels.into_iter()
+                            .map(|label| (label.name, label.value))
+                            .collect(),
+                        values,
+                    }
+                })
+                .collect();
+            QueryResult::Matrix(matrices)
+        },
+        Err(e) => {
+            return Json(ApiResponse::error(
+                "execution",
+                format!("Query execution failed: {:?}", e),
+            ));
+        }
+    };
+
     Json(ApiResponse::success(result))
 }
 
@@ -53,9 +164,40 @@ pub async fn handle_series(
     State(state): State<Arc<ServerState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Json<ApiResponse<Vec<Series>>> {
-    // TODO: 实现实际系列查询逻辑
-    let series: Vec<Series> = vec![];
-    Json(ApiResponse::success(series))
+    // 解析match参数
+    let matchers: Vec<&str> = params.get("match[]")
+        .map(|m| m.split(',').collect())
+        .unwrap_or_default();
+
+    // 解析时间参数
+    let start = params.get("start")
+        .and_then(|s| s.parse::<f64>().ok())
+        .map(|t| (t * 1000.0) as i64);
+
+    let end = params.get("end")
+        .and_then(|e| e.parse::<f64>().ok())
+        .map(|t| (t * 1000.0) as i64);
+
+    let (start, end) = (start.unwrap_or(0), end.unwrap_or(chrono::Utc::now().timestamp_millis()));
+
+    // 处理每个match表达式
+    let mut all_series = Vec::new();
+    for matcher in matchers {
+        let label_matchers = parse_label_matchers(matcher);
+        
+        if let Ok(series) = state.memstore.query(&label_matchers, start, end) {
+            let api_series: Vec<Series> = series.into_iter()
+                .map(|ts| {
+                    ts.labels.into_iter()
+                        .map(|label| (label.name, label.value))
+                        .collect()
+                })
+                .collect();
+            all_series.extend(api_series);
+        }
+    }
+
+    Json(ApiResponse::success(all_series))
 }
 
 /// 处理标签查询
@@ -63,8 +205,8 @@ pub async fn handle_labels(
     State(state): State<Arc<ServerState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Json<ApiResponse<Vec<String>>> {
-    // TODO: 实现实际标签查询逻辑
-    let labels: Vec<String> = vec!["__name__".to_string()];
+    // 使用内存存储获取标签名
+    let labels = state.memstore.label_names();
     Json(ApiResponse::success(labels))
 }
 
@@ -74,8 +216,8 @@ pub async fn handle_label_values(
     axum::extract::Path(name): axum::extract::Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Json<ApiResponse<Vec<String>>> {
-    // TODO: 实现实际标签值查询逻辑
-    let values: Vec<String> = vec![];
+    // 使用内存存储获取标签值
+    let values = state.memstore.label_values(&name);
     Json(ApiResponse::success(values))
 }
 

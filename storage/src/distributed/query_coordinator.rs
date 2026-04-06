@@ -2,9 +2,11 @@ use crate::error::{Error, Result};
 use crate::model::{TimeSeries, TimeSeriesId};
 use crate::query::{QueryPlan, QueryResult};
 use crate::rpc::{ClusterRpcManager, QueryRequest, QueryResponse, RpcClient};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::{RwLock, Semaphore};
+use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
 /// 分布式查询协调器
@@ -12,6 +14,9 @@ pub struct QueryCoordinator {
     rpc_manager: Arc<ClusterRpcManager>,
     shard_manager: Arc<RwLock<ShardManager>>,
     config: CoordinatorConfig,
+    query_cache: Arc<RwLock<HashMap<String, (QueryResult, SystemTime)>>>,
+    semaphore: Arc<Semaphore>,
+    stats: Arc<RwLock<QueryStats>>,
 }
 
 /// 协调器配置
@@ -23,6 +28,10 @@ pub struct CoordinatorConfig {
     pub max_concurrent_queries: usize,
     /// 是否启用查询缓存
     pub enable_query_cache: bool,
+    /// 查询缓存大小
+    pub query_cache_size: usize,
+    /// 查询缓存过期时间（秒）
+    pub query_cache_ttl: u64,
 }
 
 impl Default for CoordinatorConfig {
@@ -31,6 +40,8 @@ impl Default for CoordinatorConfig {
             query_timeout_ms: 30000,
             max_concurrent_queries: 100,
             enable_query_cache: true,
+            query_cache_size: 1000,
+            query_cache_ttl: 300,
         }
     }
 }
@@ -43,6 +54,79 @@ pub struct ShardManager {
     series_to_shard: HashMap<TimeSeriesId, u64>,
     /// 分片数量
     shard_count: u64,
+    /// 一致性哈希环
+    consistent_hash: ConsistentHash,
+}
+
+/// 一致性哈希
+struct ConsistentHash {
+    nodes: Vec<String>,
+    virtual_nodes: HashMap<u64, String>,
+    sorted_hashes: Vec<u64>,
+}
+
+impl ConsistentHash {
+    fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            virtual_nodes: HashMap::new(),
+            sorted_hashes: Vec::new(),
+        }
+    }
+
+    fn add_node(&mut self, node_id: String) {
+        // 添加虚拟节点
+        for i in 0..10 { // 每个节点10个虚拟节点
+            let hash = self.hash(&format!("{}-{}", node_id, i));
+            self.virtual_nodes.insert(hash, node_id.clone());
+            self.sorted_hashes.push(hash);
+        }
+        // 排序哈希值
+        self.sorted_hashes.sort();
+        // 添加到节点列表
+        if !self.nodes.contains(&node_id) {
+            self.nodes.push(node_id);
+        }
+    }
+
+    fn remove_node(&mut self, node_id: &str) {
+        // 移除虚拟节点
+        let mut hashes_to_remove = Vec::new();
+        for (hash, n) in &self.virtual_nodes {
+            if n == node_id {
+                hashes_to_remove.push(*hash);
+            }
+        }
+        for hash in hashes_to_remove {
+            self.virtual_nodes.remove(&hash);
+            self.sorted_hashes.retain(|&h| h != hash);
+        }
+        // 从节点列表中移除
+        self.nodes.retain(|n| n != node_id);
+    }
+
+    fn get_node(&self, key: &str) -> Option<&String> {
+        if self.virtual_nodes.is_empty() {
+            return None;
+        }
+        let hash = self.hash(key);
+        // 找到第一个大于等于哈希值的节点
+        let index = self.sorted_hashes.binary_search(&hash).unwrap_or_else(|x| x);
+        let index = if index >= self.sorted_hashes.len() {
+            0
+        } else {
+            index
+        };
+        self.virtual_nodes.get(&self.sorted_hashes[index])
+    }
+
+    fn hash(&self, key: &str) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+        let mut hasher = DefaultHasher::new();
+        hasher.write(key.as_bytes());
+        hasher.finish()
+    }
 }
 
 impl ShardManager {
@@ -51,6 +135,7 @@ impl ShardManager {
             shard_to_nodes: HashMap::new(),
             series_to_shard: HashMap::new(),
             shard_count,
+            consistent_hash: ConsistentHash::new(),
         }
     }
 
@@ -90,6 +175,21 @@ impl ShardManager {
 
         shard_queries
     }
+
+    /// 添加节点到一致性哈希环
+    pub fn add_node(&mut self, node_id: String) {
+        self.consistent_hash.add_node(node_id);
+    }
+
+    /// 从一致性哈希环中移除节点
+    pub fn remove_node(&mut self, node_id: &str) {
+        self.consistent_hash.remove_node(node_id);
+    }
+
+    /// 根据键获取节点
+    pub fn get_node_for_key(&self, key: &str) -> Option<&String> {
+        self.consistent_hash.get_node(key)
+    }
 }
 
 impl QueryCoordinator {
@@ -102,6 +202,9 @@ impl QueryCoordinator {
             rpc_manager,
             shard_manager,
             config,
+            query_cache: Arc::new(RwLock::new(HashMap::new())),
+            semaphore: Arc::new(Semaphore::new(config.max_concurrent_queries)),
+            stats: Arc::new(RwLock::new(QueryStats::default())),
         }
     }
 
@@ -109,13 +212,31 @@ impl QueryCoordinator {
     pub async fn execute_query(&self, plan: &QueryPlan) -> Result<QueryResult> {
         let start_time = std::time::Instant::now();
 
+        // 生成查询缓存键
+        let cache_key = format!("{:?}", plan);
+
+        // 检查缓存
+        if self.config.enable_query_cache {
+            if let Some((result, timestamp)) = self.query_cache.read().await.get(&cache_key) {
+                let now = SystemTime::now();
+                let duration = now.duration_since(*timestamp).unwrap();
+                if duration.as_secs() < self.config.query_cache_ttl {
+                    info!("Query cache hit");
+                    return Ok(result.clone());
+                }
+            }
+        }
+
         info!("Executing distributed query: {:?}", plan);
 
         // 1. 解析查询计划，获取涉及的系列
         let series_ids = self.extract_series_ids(plan).await?;
 
         if series_ids.is_empty() {
-            return Ok(QueryResult::new(Vec::new(), plan.start, plan.end, plan.step));
+            let result = QueryResult::new(Vec::new(), plan.start, plan.end, plan.step);
+            // 缓存结果
+            self.cache_result(cache_key, result.clone()).await;
+            return Ok(result);
         }
 
         // 2. 路由查询到各个分片
@@ -127,10 +248,33 @@ impl QueryCoordinator {
         // 4. 合并结果
         let merged_result = self.merge_results(shard_results, plan)?;
 
+        // 缓存结果
+        self.cache_result(cache_key, merged_result.clone()).await;
+
         let duration = start_time.elapsed();
         info!("Distributed query completed in {:?}", duration);
 
+        // 更新统计信息
+        let mut stats = self.stats.write().await;
+        stats.total_queries += 1;
+        stats.successful_queries += 1;
+        stats.avg_query_time_ms = (stats.avg_query_time_ms * 0.9 + duration.as_millis() as f64 * 0.1);
+        stats.total_series_queried += merged_result.series.len() as u64;
+        stats.total_samples_queried += merged_result.series.iter().map(|s| s.samples.len() as u64).sum::<u64>();
+
         Ok(merged_result)
+    }
+
+    /// 缓存查询结果
+    async fn cache_result(&self, key: String, result: QueryResult) {
+        let mut cache = self.query_cache.write().await;
+        // 如果缓存已满，移除最旧的项
+        if cache.len() >= self.config.query_cache_size {
+            if let Some((old_key, _)) = cache.iter().min_by_key(|(_, (_, t))| t) {
+                cache.remove(old_key);
+            }
+        }
+        cache.insert(key, (result, SystemTime::now()));
     }
 
     /// 从查询计划中提取系列ID
@@ -229,7 +373,8 @@ impl QueryCoordinator {
         if !response.success {
             return Err(Error::Internal(format!(
                 "Query failed on node {}: {}",
-                node_id, response.message
+                node_id,
+                response.message
             )));
         }
 
@@ -251,7 +396,7 @@ impl QueryCoordinator {
         }
 
         // 去重（按系列ID）
-        let mut seen_ids = std::collections::HashSet::new();
+        let mut seen_ids = HashSet::new();
         all_series.retain(|ts| seen_ids.insert(ts.id));
 
         info!("Merged {} series from shard results", all_series.len());
@@ -360,6 +505,22 @@ impl QueryCoordinator {
 
         Ok(result_ts)
     }
+
+    /// 获取查询统计信息
+    pub async fn get_stats(&self) -> Result<QueryStats> {
+        let stats = self.stats.read().await;
+        Ok(stats.clone())
+    }
+
+    /// 清理过期缓存
+    pub async fn cleanup_cache(&self) {
+        let mut cache = self.query_cache.write().await;
+        let now = SystemTime::now();
+        cache.retain(|_, (_, timestamp)| {
+            let duration = now.duration_since(*timestamp).unwrap();
+            duration.as_secs() < self.config.query_cache_ttl
+        });
+    }
 }
 
 /// 聚合类型
@@ -406,5 +567,22 @@ mod tests {
         assert_eq!(config.query_timeout_ms, 30000);
         assert_eq!(config.max_concurrent_queries, 100);
         assert!(config.enable_query_cache);
+    }
+
+    #[test]
+    fn test_consistent_hash() {
+        let mut ch = ConsistentHash::new();
+        ch.add_node("node1".to_string());
+        ch.add_node("node2".to_string());
+        
+        let node1 = ch.get_node("key1");
+        assert!(node1.is_some());
+        
+        let node2 = ch.get_node("key2");
+        assert!(node2.is_some());
+        
+        ch.remove_node("node1");
+        let node3 = ch.get_node("key1");
+        assert!(node3.is_some());
     }
 }
