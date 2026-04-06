@@ -178,13 +178,24 @@ impl QueryExecutor {
             return Ok(Vec::new());
         }
         
-        // Simple sum aggregation (without grouping for now)
-        let mut sum_series = TimeSeries::new(0, series[0].labels.clone());
+        // Sum aggregation by timestamp
+        let mut timestamp_sums = std::collections::HashMap::new();
         
         for ts in &series {
             for sample in &ts.samples {
-                sum_series.add_sample(sample.clone());
+                *timestamp_sums.entry(sample.timestamp).or_insert(0.0) += sample.value;
             }
+        }
+        
+        // Create a new time series with the summed values
+        let mut sum_series = TimeSeries::new(0, series[0].labels.clone());
+        
+        // Convert the hash map back to samples, sorted by timestamp
+        let mut timestamps: Vec<_> = timestamp_sums.keys().collect();
+        timestamps.sort();
+        
+        for timestamp in timestamps {
+            sum_series.add_sample(Sample::new(*timestamp, timestamp_sums[timestamp]));
         }
         
         Ok(vec![sum_series])

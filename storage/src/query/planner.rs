@@ -245,7 +245,7 @@ mod tests {
         
         match plan.plan_type {
             PlanType::MatrixQuery(mq) => {
-                assert_eq!(mq.range, 300); // 5 minutes
+                assert_eq!(mq.range, 300000); // 5 minutes in milliseconds
                 assert_eq!(mq.vector_plan.name, Some("http_requests_total".to_string()));
             }
             _ => panic!("Expected MatrixQuery"),

@@ -148,6 +148,11 @@ impl InvertedIndex {
         let series_labels = self.series_labels.read();
         series_labels.get(&series_id).cloned()
     }
+    
+    pub fn all_series_ids(&self) -> Vec<TimeSeriesId> {
+        let series_labels = self.series_labels.read();
+        series_labels.keys().copied().collect()
+    }
 }
 
 impl Default for InvertedIndex {

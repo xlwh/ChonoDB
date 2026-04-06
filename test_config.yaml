@@ -1,0 +1,69 @@
+# ChronoDB 测试配置文件
+listen_address: "0.0.0.0"
+port: 9091
+data_dir: "./data"
+
+storage:
+  mode: standalone
+  backend: local
+  local_path: "./data"
+  max_disk_usage: "80%"
+
+query:
+  max_concurrent: 100
+  timeout: 120
+  max_samples: 50000000
+  enable_vectorized: true
+  enable_parallel: true
+  enable_auto_downsampling: true
+  downsample_policy: "auto"
+  query_cache_size: "2GB"
+  enable_query_cache: true
+  query_cache_ttl: 300
+
+memory:
+  memstore_size: "1GB"
+  wal_size: "512MB"
+  query_cache_size: "1GB"
+  max_memory_usage: "80%"
+
+compression:
+  time_column:
+    algorithm: "zstd"
+    level: 3
+  value_column:
+    algorithm: "zstd"
+    level: 3
+    use_prediction: true
+  label_column:
+    algorithm: "dictionary"
+    level: 0
+
+retention:
+  hot: "24h"
+  warm: "168h"
+  cold: "720h"
+  archive: "8760h"
+
+rules:
+  rule_files:
+    - "./alert_rules.yaml"
+  evaluation_interval: 60
+  alert_send_interval: 60
+
+targets:
+  config_file: ""
+  scrape_interval: 60
+  scrape_timeout: 10
+
+remote_write:
+  enabled: true
+  listen_address: "0.0.0.0:9092"
+  max_concurrent: 100
+  batch_size: 1000
+  timeout: 30
+
+log:
+  level: "info"
+  format: "text"
+  output: ""

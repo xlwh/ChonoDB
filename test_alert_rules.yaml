@@ -1,0 +1,18 @@
+groups:
+  - name: test_group
+    interval: 10s
+    rules:
+      - type: alert
+        name: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        duration: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }}% for {{ $labels.job }}"
+      - type: record
+        name: job:http_requests:rate5m
+        expr: sum(rate(http_requests_total[5m])) by (job)
+        labels:
+          metric_type: counter

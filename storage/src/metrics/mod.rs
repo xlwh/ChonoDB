@@ -28,6 +28,34 @@ pub enum MetricValue {
     Summary { sum: f64, count: u64, quantiles: HashMap<f64, f64> },
 }
 
+/// API 统计信息
+#[derive(Debug, Clone, Default)]
+pub struct ApiStats {
+    pub total_requests: u64,
+    pub successful_requests: u64,
+    pub failed_requests: u64,
+    pub avg_request_time_ms: f64,
+    pub max_request_time_ms: u64,
+    pub min_request_time_ms: u64,
+    pub request_time_sum_ms: f64,
+    pub request_time_count: u64,
+    pub average_latency_ms: f64,
+    pub endpoint_stats: std::collections::HashMap<String, EndpointStats>,
+}
+
+/// 端点统计信息
+#[derive(Debug, Clone, Default)]
+pub struct EndpointStats {
+    pub total_requests: u64,
+    pub successful_requests: u64,
+    pub failed_requests: u64,
+    pub avg_request_time_ms: f64,
+    pub max_request_time_ms: u64,
+    pub min_request_time_ms: u64,
+    pub requests: u64,
+    pub average_latency_ms: f64,
+}
+
 /// 告警规则
 #[derive(Debug, Clone)]
 pub struct AlertRule {
@@ -270,6 +298,13 @@ impl StorageMetricsCollector {
             MetricType::Gauge,
         ).with_value(MetricValue::Gauge(stats.total_series as f64))).await;
 
+        // 为Grafana面板添加兼容指标
+        self.registry.register(Metric::new(
+            "chronodb_series_count",
+            "Total number of time series (for Grafana compatibility)",
+            MetricType::Gauge,
+        ).with_value(MetricValue::Gauge(stats.total_series as f64))).await;
+
         // 样本数量
         self.registry.register(Metric::new(
             "chronodb_samples_total",
@@ -291,10 +326,24 @@ impl StorageMetricsCollector {
             MetricType::Counter,
         ).with_value(MetricValue::Counter(stats.writes))).await;
 
+        // 为Grafana面板添加兼容指标
+        self.registry.register(Metric::new(
+            "chronodb_write_requests_total",
+            "Total number of write requests (for Grafana compatibility)",
+            MetricType::Counter,
+        ).with_value(MetricValue::Counter(stats.writes))).await;
+
         // 读取次数
         self.registry.register(Metric::new(
             "chronodb_reads_total",
             "Total number of reads",
+            MetricType::Counter,
+        ).with_value(MetricValue::Counter(stats.reads))).await;
+
+        // 为Grafana面板添加兼容指标
+        self.registry.register(Metric::new(
+            "chronodb_query_requests_total",
+            "Total number of query requests (for Grafana compatibility)",
             MetricType::Counter,
         ).with_value(MetricValue::Counter(stats.reads))).await;
 
@@ -307,6 +356,20 @@ impl StorageMetricsCollector {
                 "Average query latency in milliseconds",
                 MetricType::Gauge,
             ).with_value(MetricValue::Gauge(avg_latency))).await;
+
+            // 为Grafana面板添加兼容指标
+            let sum_seconds = query_latency.iter().sum::<f64>() / 1000.0;
+            let count = query_latency.len() as u64;
+            self.registry.register(Metric::new(
+                "chronodb_query_duration_seconds_sum",
+                "Total query duration in seconds (for Grafana compatibility)",
+                MetricType::Counter,
+            ).with_value(MetricValue::Counter(sum_seconds as u64))).await;
+            self.registry.register(Metric::new(
+                "chronodb_query_duration_seconds_count",
+                "Number of query requests (for Grafana compatibility)",
+                MetricType::Counter,
+            ).with_value(MetricValue::Counter(count))).await;
         }
 
         // 写入延迟
@@ -318,6 +381,84 @@ impl StorageMetricsCollector {
                 "Average write latency in milliseconds",
                 MetricType::Gauge,
             ).with_value(MetricValue::Gauge(avg_latency))).await;
+        }
+
+        Ok(())
+    }
+
+    /// 收集降采样指标
+    pub async fn collect_downsample_metrics(&self, downsample_stats: &crate::downsample::DownsampleStats) -> Result<()> {
+        // 降采样任务总数
+        self.registry.register(Metric::new(
+            "chronodb_downsample_tasks_total",
+            "Total number of downsample tasks",
+            MetricType::Counter,
+        ).with_value(MetricValue::Counter(downsample_stats.total_tasks))).await;
+
+        // 已完成的降采样任务数
+        self.registry.register(Metric::new(
+            "chronodb_downsample_tasks_completed_total",
+            "Number of completed downsample tasks",
+            MetricType::Counter,
+        ).with_value(MetricValue::Counter(downsample_stats.completed_tasks))).await;
+
+        // 失败的降采样任务数
+        self.registry.register(Metric::new(
+            "chronodb_downsample_tasks_failed_total",
+            "Number of failed downsample tasks",
+            MetricType::Counter,
+        ).with_value(MetricValue::Counter(downsample_stats.failed_tasks))).await;
+
+        // 处理的样本数
+        self.registry.register(Metric::new(
+            "chronodb_downsample_samples_processed_total",
+            "Total number of samples processed by downsampling",
+            MetricType::Counter,
+        ).with_value(MetricValue::Counter(downsample_stats.total_samples_processed))).await;
+
+        // 生成的样本数
+        self.registry.register(Metric::new(
+            "chronodb_downsample_samples_generated_total",
+            "Total number of samples generated by downsampling",
+            MetricType::Counter,
+        ).with_value(MetricValue::Counter(downsample_stats.total_samples_generated))).await;
+
+        // 各降采样级别的统计
+        for (level, level_stats) in &downsample_stats.level_stats {
+            let level_str = format!("{:?}", level);
+            
+            // 各级别处理的样本数
+            self.registry.register(Metric::new(
+                "chronodb_downsample_level_samples_processed_total",
+                "Number of samples processed by downsampling per level",
+                MetricType::Counter,
+            ).with_label("level", &level_str)
+              .with_value(MetricValue::Counter(level_stats.samples_processed))).await;
+
+            // 各级别生成的样本数
+            self.registry.register(Metric::new(
+                "chronodb_downsample_level_samples_generated_total",
+                "Number of samples generated by downsampling per level",
+                MetricType::Counter,
+            ).with_label("level", &level_str)
+              .with_value(MetricValue::Counter(level_stats.samples_generated))).await;
+
+            // 各级别的任务数
+            self.registry.register(Metric::new(
+                "chronodb_downsample_level_tasks_total",
+                "Number of downsample tasks per level",
+                MetricType::Counter,
+            ).with_label("level", &level_str)
+              .with_value(MetricValue::Counter(level_stats.task_count))).await;
+        }
+
+        // 最后一次运行时间
+        if let Some(last_run) = downsample_stats.last_run_timestamp {
+            self.registry.register(Metric::new(
+                "chronodb_downsample_last_run_timestamp",
+                "Timestamp of the last downsample run",
+                MetricType::Gauge,
+            ).with_value(MetricValue::Gauge(last_run as f64))).await;
         }
 
         Ok(())
@@ -396,6 +537,139 @@ impl StorageMetricsCollector {
         Ok(())
     }
 
+    /// 收集分层存储指标
+    pub async fn collect_tiered_storage_metrics(&self, tiered_manager: &crate::tiered::manager::TieredStorageManager) -> Result<()> {
+        // 收集分层存储统计信息
+        let stats = tiered_manager.collect_stats().await?;
+        
+        // 总系列数
+        self.registry.register(Metric::new(
+            "chronodb_tiered_series_total",
+            "Total number of series in tiered storage",
+            MetricType::Gauge,
+        ).with_value(MetricValue::Gauge(stats.total_series as f64))).await;
+
+        // 总样本数
+        self.registry.register(Metric::new(
+            "chronodb_tiered_samples_total",
+            "Total number of samples in tiered storage",
+            MetricType::Gauge,
+        ).with_value(MetricValue::Gauge(stats.total_samples as f64))).await;
+
+        // 总存储字节数
+        self.registry.register(Metric::new(
+            "chronodb_tiered_storage_bytes",
+            "Total storage size in bytes for tiered storage",
+            MetricType::Gauge,
+        ).with_value(MetricValue::Gauge(stats.total_bytes as f64))).await;
+
+        // 每层的统计信息
+        for (tier_name, tier_stats) in stats.tier_stats {
+            // 系列数
+            self.registry.register(Metric::new(
+                "chronodb_tier_series_total",
+                "Number of series per tier",
+                MetricType::Gauge,
+            ).with_label("tier", &tier_name)
+              .with_value(MetricValue::Gauge(tier_stats.series_count as f64))).await;
+
+            // 样本数
+            self.registry.register(Metric::new(
+                "chronodb_tier_samples_total",
+                "Number of samples per tier",
+                MetricType::Gauge,
+            ).with_label("tier", &tier_name)
+              .with_value(MetricValue::Gauge(tier_stats.sample_count as f64))).await;
+
+            // 存储字节数
+            self.registry.register(Metric::new(
+                "chronodb_tier_storage_bytes",
+                "Storage size in bytes per tier",
+                MetricType::Gauge,
+            ).with_label("tier", &tier_name)
+              .with_value(MetricValue::Gauge(tier_stats.total_bytes as f64))).await;
+
+            // 文件数
+            self.registry.register(Metric::new(
+                "chronodb_tier_file_count",
+                "Number of files per tier",
+                MetricType::Gauge,
+            ).with_label("tier", &tier_name)
+              .with_value(MetricValue::Gauge(tier_stats.file_count as f64))).await;
+        }
+
+        // 最后迁移时间
+        if let Some(last_migration) = stats.last_migration_time {
+            self.registry.register(Metric::new(
+                "chronodb_tiered_last_migration_timestamp",
+                "Timestamp of the last data migration",
+                MetricType::Gauge,
+            ).with_value(MetricValue::Gauge(last_migration as f64))).await;
+        }
+
+        Ok(())
+    }
+
+    /// 收集 API 性能指标
+    pub async fn collect_api_metrics(&self, api_stats: &ApiStats) -> Result<()> {
+        // API 请求总数
+        self.registry.register(Metric::new(
+            "chronodb_api_requests_total",
+            "Total number of API requests",
+            MetricType::Counter,
+        ).with_value(MetricValue::Counter(api_stats.total_requests))).await;
+
+        // 成功请求数
+        self.registry.register(Metric::new(
+            "chronodb_api_requests_successful_total",
+            "Number of successful API requests",
+            MetricType::Counter,
+        ).with_value(MetricValue::Counter(api_stats.successful_requests))).await;
+
+        // 失败请求数
+        self.registry.register(Metric::new(
+            "chronodb_api_requests_failed_total",
+            "Number of failed API requests",
+            MetricType::Counter,
+        ).with_value(MetricValue::Counter(api_stats.failed_requests))).await;
+
+        // 平均请求延迟
+        self.registry.register(Metric::new(
+            "chronodb_api_request_latency_ms",
+            "Average API request latency in milliseconds",
+            MetricType::Gauge,
+        ).with_value(MetricValue::Gauge(api_stats.average_latency_ms))).await;
+
+        // 按端点统计
+        for (endpoint, endpoint_stats) in &api_stats.endpoint_stats {
+            // 端点请求数
+            self.registry.register(Metric::new(
+                "chronodb_api_endpoint_requests_total",
+                "Number of requests per API endpoint",
+                MetricType::Counter,
+            ).with_label("endpoint", endpoint)
+              .with_value(MetricValue::Counter(endpoint_stats.requests))).await;
+
+            // 端点失败数
+            self.registry.register(Metric::new(
+                "chronodb_api_endpoint_requests_failed_total",
+                "Number of failed requests per API endpoint",
+                MetricType::Counter,
+            ).with_label("endpoint", endpoint)
+              .with_value(MetricValue::Counter(endpoint_stats.failed_requests))).await;
+
+            // 端点平均延迟
+            self.registry.register(Metric::new(
+                "chronodb_api_endpoint_latency_ms",
+                "Average latency per API endpoint",
+                MetricType::Gauge,
+            ).with_label("endpoint", endpoint)
+              .with_value(MetricValue::Gauge(endpoint_stats.average_latency_ms))).await;
+        }
+
+        Ok(())
+    }
+
     /// 添加默认告警规则
     pub async fn add_default_alert_rules(&self) {
         // 系列数量告警
@@ -431,6 +705,56 @@ impl StorageMetricsCollector {
             annotations: HashMap::from([
                 ("summary".to_string(), "Cluster node down".to_string()),
                 ("description".to_string(), "One or more nodes in the cluster are down".to_string()),
+            ]),
+        }).await;
+
+        // 分层存储告警
+        // 热层容量告警
+        self.registry.add_alert_rule(AlertRule {
+            name: "HotTierFull".to_string(),
+            expr: "chronodb_tier_storage_bytes{ tier=\"hot\" } / 1024 / 1024 / 1024 > 9".to_string(), // 假设热层最大容量为10GB
+            for_duration: Duration::from_mins(5),
+            labels: HashMap::from([("severity".to_string(), "warning".to_string())]),
+            annotations: HashMap::from([
+                ("summary".to_string(), "Hot tier nearly full".to_string()),
+                ("description".to_string(), "The hot tier is nearly full (over 9GB)".to_string()),
+            ]),
+        }).await;
+
+        // API 性能告警
+        // API 延迟告警
+        self.registry.add_alert_rule(AlertRule {
+            name: "HighApiLatency".to_string(),
+            expr: "chronodb_api_request_latency_ms > 500".to_string(),
+            for_duration: Duration::from_mins(5),
+            labels: HashMap::from([("severity".to_string(), "warning".to_string())]),
+            annotations: HashMap::from([
+                ("summary".to_string(), "High API latency".to_string()),
+                ("description".to_string(), "Average API request latency has exceeded 500ms".to_string()),
+            ]),
+        }).await;
+
+        // API 错误率告警
+        self.registry.add_alert_rule(AlertRule {
+            name: "HighApiErrorRate".to_string(),
+            expr: "rate(chronodb_api_requests_failed_total[5m]) / rate(chronodb_api_requests_total[5m]) > 0.05".to_string(), // 5% 错误率
+            for_duration: Duration::from_mins(5),
+            labels: HashMap::from([("severity".to_string(), "warning".to_string())]),
+            annotations: HashMap::from([
+                ("summary".to_string(), "High API error rate".to_string()),
+                ("description".to_string(), "API error rate has exceeded 5%".to_string()),
+            ]),
+        }).await;
+
+        // 存储容量告警
+        self.registry.add_alert_rule(AlertRule {
+            name: "StorageFull".to_string(),
+            expr: "chronodb_storage_bytes / 1024 / 1024 / 1024 > 90".to_string(), // 假设总存储容量为100GB
+            for_duration: Duration::from_mins(5),
+            labels: HashMap::from([("severity".to_string(), "critical".to_string())]),
+            annotations: HashMap::from([
+                ("summary".to_string(), "Storage nearly full".to_string()),
+                ("description".to_string(), "Total storage usage has exceeded 90GB".to_string()),
             ]),
         }).await;
     }

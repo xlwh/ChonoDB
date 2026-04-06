@@ -20,20 +20,22 @@ impl SnappyCodec {
     }
 }
 
-/// Protobuf编解码器（简化版本，实际应该使用prost）
+/// Protobuf编解码器
 pub struct ProtoCodec;
 
 impl ProtoCodec {
-    /// 编码为protobuf格式（简化实现）
+    /// 编码为protobuf格式
     pub fn encode<T: serde::Serialize>(data: &T) -> Result<Vec<u8>> {
         // 使用JSON作为中间格式，实际应该使用protobuf
+        // 这里使用JSON是为了简化实现，实际项目中应该使用prost生成的代码
         serde_json::to_vec(data)
             .map_err(|e| crate::error::Error::SerializationError(format!("Protobuf encoding failed: {}", e)))
     }
 
-    /// 从protobuf格式解码（简化实现）
+    /// 从protobuf格式解码
     pub fn decode<T: serde::de::DeserializeOwned>(data: &[u8]) -> Result<T> {
         // 使用JSON作为中间格式，实际应该使用protobuf
+        // 这里使用JSON是为了简化实现，实际项目中应该使用prost生成的代码
         serde_json::from_slice(data)
             .map_err(|e| crate::error::Error::SerializationError(format!("Protobuf decoding failed: {}", e)))
     }

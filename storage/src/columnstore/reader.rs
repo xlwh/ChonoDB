@@ -2,6 +2,7 @@ use crate::columnstore::{BlockMeta, Column, ColumnType};
 use crate::error::{Error, Result};
 use crate::index::BloomFilter;
 use crate::model::{Labels, Sample, TimeSeriesId};
+use crate::downsample::DownsamplePoint;
 use memmap2::Mmap;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -173,6 +174,86 @@ impl BlockReader {
         
         Ok(results)
     }
+
+    pub fn read_downsample_points(&self, series_id: TimeSeriesId, start: i64, end: i64) -> Result<Vec<DownsamplePoint>> {
+        let index = self.read_index()?;
+        
+        let entry = index
+            .iter()
+            .find(|e| e.series_id == series_id)
+            .ok_or_else(|| Error::SeriesNotFound(series_id))?;
+        
+        let time_column = self.read_column(ColumnType::Timestamp)?;
+        let min_column = self.read_column(ColumnType::Min)?;
+        let max_column = self.read_column(ColumnType::Max)?;
+        let avg_column = self.read_column(ColumnType::Avg)?;
+        let sum_column = self.read_column(ColumnType::Sum)?;
+        let count_column = self.read_column(ColumnType::Count)?;
+        let last_column = self.read_column(ColumnType::Last)?;
+        
+        let timestamps = super::column::decode_timestamp_column(&time_column)?;
+        let min_values = super::column::decode_value_column(&min_column)?;
+        let max_values = super::column::decode_value_column(&max_column)?;
+        let avg_values = super::column::decode_value_column(&avg_column)?;
+        let sum_values = super::column::decode_value_column(&sum_column)?;
+        let count_values = super::column::decode_value_column(&count_column)?;
+        let last_values = super::column::decode_value_column(&last_column)?;
+        
+        let start_idx = entry.offset as usize;
+        let end_idx = start_idx + entry.count as usize;
+        
+        let mut points = Vec::new();
+        for i in start_idx..end_idx.min(timestamps.len()) {
+            let ts = timestamps[i];
+            if ts >= start && ts <= end {
+                let point = DownsamplePoint {
+                    timestamp: ts,
+                    min_value: min_values.get(i).copied().unwrap_or(0.0),
+                    max_value: max_values.get(i).copied().unwrap_or(0.0),
+                    avg_value: avg_values.get(i).copied().unwrap_or(0.0),
+                    sum_value: sum_values.get(i).copied().unwrap_or(0.0),
+                    count: count_values.get(i).copied().unwrap_or(0.0) as u64,
+                    last_value: last_values.get(i).copied().unwrap_or(0.0),
+                };
+                points.push(point);
+            }
+        }
+        
+        Ok(points)
+    }
+
+    pub fn query_downsample_by_labels(&self, labels: &Labels, start: i64, end: i64, function: &str) -> Result<Vec<(TimeSeriesId, Vec<Sample>)>> {
+        if !self.contains_series(labels) {
+            return Ok(Vec::new());
+        }
+        
+        let index = self.read_index()?;
+        let mut results = Vec::new();
+        
+        for entry in &index {
+            if labels_match(&entry.labels, labels) {
+                let points = self.read_downsample_points(entry.series_id, start, end)?;
+                let samples: Vec<Sample> = points.into_iter().map(|p| {
+                    let value = match function {
+                        "min" => p.min_value,
+                        "max" => p.max_value,
+                        "avg" => p.avg_value,
+                        "sum" => p.sum_value,
+                        "count" => p.count as f64,
+                        "last" => p.last_value,
+                        _ => p.avg_value,
+                    };
+                    Sample::new(p.timestamp, value)
+                }).collect();
+                
+                if !samples.is_empty() {
+                    results.push((entry.series_id, samples));
+                }
+            }
+        }
+        
+        Ok(results)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +332,7 @@ impl BlockManager {
 mod tests {
     use super::*;
     use crate::columnstore::BlockWriter;
+    use crate::model::Label;
     use tempfile::tempdir;
 
     #[test]

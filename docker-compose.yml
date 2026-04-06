@@ -8,10 +8,13 @@ services:
     container_name: chronodb
     ports:
       - "9090:9090"
+      - "9091:9091"  # 远程写入端口
     volumes:
       - chronodb-data:/var/lib/chronodb
       - chronodb-logs:/var/log/chronodb
       - ./config/chronodb.yaml:/etc/chronodb/chronodb.yaml:ro
+      - ./config/rules:/etc/chronodb/rules:ro
+      - ./config/targets:/etc/chronodb/targets:ro
     environment:
       - RUST_LOG=info
       - RUST_BACKTRACE=1
@@ -41,7 +44,7 @@ services:
     image: prom/prometheus:latest
     container_name: chronodb-prometheus
     ports:
-      - "9091:9090"
+      - "9092:9090"
     volumes:
       - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -114,6 +117,26 @@ services:
     profiles:
       - with-monitoring
 
+  # Etcd（可选，用于分布式模式）
+  etcd:
+    image: bitnami/etcd:latest
+    container_name: chronodb-etcd
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    environment:
+      - ETCD_ROOT_PASSWORD=etcdroot
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+    volumes:
+      - etcd-data:/bitnami/etcd
+    restart: unless-stopped
+    networks:
+      - chronodb-network
+    profiles:
+      - with-etcd
+
 volumes:
   chronodb-data:
     driver: local
@@ -126,6 +149,8 @@ volumes:
   grafana-data:
     driver: local
   alertmanager-data:
+    driver: local
+  etcd-data:
     driver: local
 
 networks:

@@ -224,6 +224,80 @@ impl ShardManager {
         
         Ok(node_shards.get(node_id).cloned().unwrap_or_default())
     }
+    
+    /// 处理节点故障
+    pub async fn handle_node_failure(&self, failed_node_id: &str, healthy_nodes: &[String]) -> Result<()> {
+        info!("Handling node failure in shard manager: {}, healthy nodes: {:?}", failed_node_id, healthy_nodes);
+        
+        if healthy_nodes.is_empty() {
+            return Err(crate::error::Error::Internal("No healthy nodes available for failover".to_string()));
+        }
+        
+        // 1. 获取故障节点负责的分片
+        let failed_shards = self.get_node_shards(failed_node_id).await?;
+        info!("Failed node {} was responsible for {} shards", failed_node_id, failed_shards.len());
+        
+        // 2. 重新分配这些分片
+        for shard_id in failed_shards {
+            let mut shards_write = self.shards.write().await;
+            if let Some(shard) = shards_write.get_mut(&shard_id) {
+                // 检查故障节点是否是主节点
+                if shard.primary_node == failed_node_id {
+                    // 从健康节点中选择新的主节点
+                    let new_primary = healthy_nodes[0].clone();
+                    
+                    // 重新计算副本节点
+                    let replication_factor = self.config.replication_factor as usize;
+                    let mut new_followers = Vec::new();
+                    for i in 1..replication_factor.min(healthy_nodes.len()) {
+                        new_followers.push(healthy_nodes[i].clone());
+                    }
+                    
+                    // 更新分片信息
+                    shard.primary_node = new_primary.clone();
+                    shard.follower_nodes = new_followers.clone();
+                    shard.status = ShardStatus::Healthy;
+                    
+                    info!("Reassigned shard {}: new primary {}, new followers: {:?}", 
+                          shard_id, new_primary, new_followers);
+                } else {
+                    // 故障节点是副本节点，从副本列表中移除
+                    shard.follower_nodes.retain(|node| node != failed_node_id);
+                    
+                    // 如果需要，添加新的副本节点
+                    if shard.follower_nodes.len() < (self.config.replication_factor as usize - 1) {
+                        for node in healthy_nodes {
+                            if node != &shard.primary_node && !shard.follower_nodes.contains(node) {
+                                shard.follower_nodes.push(node.clone());
+                                if shard.follower_nodes.len() >= (self.config.replication_factor as usize - 1) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    info!("Updated shard {} followers: {:?}", shard_id, shard.follower_nodes);
+                }
+            }
+        }
+        
+        // 3. 更新节点-分片映射
+        let mut node_shards_write = self.node_shards.write().await;
+        node_shards_write.remove(failed_node_id);
+        
+        // 重新计算所有节点的分片映射
+        node_shards_write.clear();
+        let shards_read = self.shards.read().await;
+        for (shard_id, shard) in &*shards_read {
+            node_shards_write.entry(shard.primary_node.clone()).or_insert_with(Vec::new).push(*shard_id);
+            for follower in &shard.follower_nodes {
+                node_shards_write.entry(follower.clone()).or_insert_with(Vec::new).push(*shard_id);
+            }
+        }
+        
+        info!("Completed failover for node: {}", failed_node_id);
+        Ok(())
+    }
 
     /// 添加虚拟节点
     pub async fn add_virtual_nodes(&self, node_id: String) -> Result<()> {

@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 
 mod api;
 mod tools;
+mod stress_test;
 
 #[derive(Parser)]
 #[command(name = "chronodb")]
@@ -102,18 +103,8 @@ enum Commands {
     },
     /// Migrate data from Prometheus
     Migrate {
-        /// Prometheus data directory
-        #[arg(short, long)]
-        prometheus_dir: PathBuf,
-        /// ChronoDB data directory
-        #[arg(short, long)]
-        data_dir: Option<PathBuf>,
-        /// Start time (Unix timestamp)
-        #[arg(short, long)]
-        start_time: Option<i64>,
-        /// End time (Unix timestamp)
-        #[arg(short, long)]
-        end_time: Option<i64>,
+        #[command(subcommand)]
+        command: MigrateCommands,
     },
     /// Verify data integrity
     Verify {
@@ -127,7 +118,7 @@ enum Commands {
     /// Benchmark performance
     Bench {
         /// Data directory
-        #[arg(short, long)]
+        #[arg(long)]
         data_dir: Option<PathBuf>,
         /// Benchmark duration in seconds
         #[arg(short, long, default_value = "60")]
@@ -138,6 +129,254 @@ enum Commands {
         /// Output format: text | json
         #[arg(short, long, default_value = "text")]
         format: String,
+    },
+    /// Run stress test
+    Stress {
+        /// Data directory
+        #[arg(short, long)]
+        data_dir: Option<PathBuf>,
+        /// Test duration in seconds
+        #[arg(short, long, default_value = "60")]
+        duration: u64,
+        /// Number of concurrent write threads
+        #[arg(long, default_value = "4")]
+        write_threads: usize,
+        /// Number of concurrent query threads
+        #[arg(long, default_value = "2")]
+        query_threads: usize,
+        /// Write rate per thread (ops/sec)
+        #[arg(long, default_value = "100")]
+        write_rate: u64,
+        /// Query rate per thread (ops/sec)
+        #[arg(long, default_value = "50")]
+        query_rate: u64,
+        /// Number of labels per series
+        #[arg(long, default_value = "3")]
+        labels_per_series: usize,
+        /// Number of samples per write
+        #[arg(long, default_value = "10")]
+        samples_per_write: usize,
+        /// Number of series to generate
+        #[arg(long, default_value = "1000")]
+        series_count: usize,
+    },
+    /// Tiered storage management
+    Tiered {
+        #[command(subcommand)]
+        command: TieredCommands,
+    },
+    /// Cluster management
+    Cluster {
+        #[command(subcommand)]
+        command: ClusterCommands,
+    },
+    /// Configuration management
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+    /// Monitoring and alerts
+    Monitoring {
+        #[command(subcommand)]
+        command: MonitoringCommands,
+    },
+    /// Data management
+    Data {
+        #[command(subcommand)]
+        command: DataCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum TieredCommands {
+    /// Show tiered storage status
+    Status {
+        /// Data directory
+        #[arg(short, long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// Perform tiered storage migration
+    Migrate {
+        /// Data directory
+        #[arg(short, long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// Configure tiered storage
+    Configure {
+        /// Data directory
+        #[arg(short, long)]
+        data_dir: Option<PathBuf>,
+        /// Tier name (hot, warm, cold, archive)
+        #[arg(short, long)]
+        tier: String,
+        /// Retention period in hours
+        #[arg(short, long)]
+        retention_hours: u64,
+        /// Maximum size in GB
+        #[arg(short, long)]
+        max_size_gb: u64,
+    },
+}
+
+#[derive(Subcommand)]
+enum ClusterCommands {
+    /// Show cluster status
+    Status,
+    /// List cluster nodes
+    ListNodes,
+    /// Add cluster node
+    AddNode {
+        /// Node address (host:port)
+        #[arg(short, long)]
+        address: String,
+    },
+    /// Remove cluster node
+    RemoveNode {
+        /// Node address (host:port)
+        #[arg(short, long)]
+        address: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigCommands {
+    /// Show current configuration
+    Show {
+        /// Configuration file path
+        #[arg(short, long)]
+        config_file: String,
+    },
+    /// Validate configuration file
+    Validate {
+        /// Configuration file path
+        #[arg(short, long)]
+        config_file: String,
+    },
+    /// Generate default configuration file
+    Generate {
+        /// Output file path
+        #[arg(short, long)]
+        output_file: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MonitoringCommands {
+    /// Show current metrics
+    Metrics,
+    /// Show alert rules
+    Alerts,
+    /// Check system health
+    Health,
+}
+
+#[derive(Subcommand)]
+enum DataCommands {
+    /// List time series
+    ListSeries {
+        /// Data directory
+        #[arg(short, long)]
+        data_dir: Option<PathBuf>,
+        /// Series pattern
+        #[arg(short, long, default_value = "*")]
+        pattern: String,
+    },
+    /// Delete time series
+    DeleteSeries {
+        /// Data directory
+        #[arg(short, long)]
+        data_dir: Option<PathBuf>,
+        /// Series pattern
+        #[arg(short, long)]
+        pattern: String,
+    },
+    /// Export time series data
+    ExportSeries {
+        /// Data directory
+        #[arg(short, long)]
+        data_dir: Option<PathBuf>,
+        /// Series pattern
+        #[arg(short, long, default_value = "*")]
+        pattern: String,
+        /// Output file path
+        #[arg(short, long)]
+        output_file: String,
+    },
+    /// Import time series data
+    ImportSeries {
+        /// Data directory
+        #[arg(short, long)]
+        data_dir: Option<PathBuf>,
+        /// Input file path
+        #[arg(short, long)]
+        input_file: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MigrateCommands {
+    /// Migrate data from Prometheus
+    Prometheus {
+        /// Prometheus data directory
+        #[arg(short, long)]
+        prometheus_dir: PathBuf,
+        /// ChronoDB data directory
+        #[arg(short, long)]
+        data_dir: Option<PathBuf>,
+        /// Start time (Unix timestamp)
+        #[arg(short, long)]
+        start_time: Option<i64>,
+        /// End time (Unix timestamp)
+        #[arg(short, long)]
+        end_time: Option<i64>,
+    },
+    /// Migrate data from InfluxDB
+    InfluxDB {
+        /// InfluxDB URL
+        #[arg(short, long)]
+        influxdb_url: String,
+        /// Database name
+        #[arg(short, long)]
+        database: String,
+        /// ChronoDB data directory
+        #[arg(short, long)]
+        data_dir: Option<PathBuf>,
+        /// Start time (Unix timestamp)
+        #[arg(short, long)]
+        start_time: Option<i64>,
+        /// End time (Unix timestamp)
+        #[arg(short, long)]
+        end_time: Option<i64>,
+    },
+    /// Migrate data from Graphite
+    Graphite {
+        /// Graphite data directory
+        #[arg(short, long)]
+        graphite_dir: PathBuf,
+        /// ChronoDB data directory
+        #[arg(short, long)]
+        data_dir: Option<PathBuf>,
+        /// Start time (Unix timestamp)
+        #[arg(short, long)]
+        start_time: Option<i64>,
+        /// End time (Unix timestamp)
+        #[arg(short, long)]
+        end_time: Option<i64>,
+    },
+    /// Migrate data from OpenTSDB
+    OpenTSDB {
+        /// OpenTSDB URL
+        #[arg(short, long)]
+        opentsdb_url: String,
+        /// ChronoDB data directory
+        #[arg(short, long)]
+        data_dir: Option<PathBuf>,
+        /// Start time (Unix timestamp)
+        #[arg(short, long)]
+        start_time: Option<i64>,
+        /// End time (Unix timestamp)
+        #[arg(short, long)]
+        end_time: Option<i64>,
     },
 }
 
@@ -212,14 +451,46 @@ async fn main() -> anyhow::Result<()> {
                 input.to_str().unwrap()
             )
         }
-        Some(Commands::Migrate { prometheus_dir, data_dir, start_time, end_time }) => {
-            let data_dir = data_dir.unwrap_or(cli.data_dir);
-            tools::MigrationTool::migrate(
-                prometheus_dir.to_str().unwrap(),
-                data_dir.to_str().unwrap(),
-                start_time,
-                end_time
-            )
+        Some(Commands::Migrate { command }) => {
+            match command {
+                MigrateCommands::Prometheus { prometheus_dir, data_dir, start_time, end_time } => {
+                    let data_dir = data_dir.unwrap_or(cli.data_dir);
+                    tools::MigrationTool::migrate(
+                        prometheus_dir.to_str().unwrap(),
+                        data_dir.to_str().unwrap(),
+                        start_time,
+                        end_time
+                    )
+                }
+                MigrateCommands::InfluxDB { influxdb_url, database, data_dir, start_time, end_time } => {
+                    let data_dir = data_dir.unwrap_or(cli.data_dir);
+                    tools::MigrationTool::migrate_from_influxdb(
+                        &influxdb_url,
+                        &database,
+                        data_dir.to_str().unwrap(),
+                        start_time,
+                        end_time
+                    )
+                }
+                MigrateCommands::Graphite { graphite_dir, data_dir, start_time, end_time } => {
+                    let data_dir = data_dir.unwrap_or(cli.data_dir);
+                    tools::MigrationTool::migrate_from_graphite(
+                        graphite_dir.to_str().unwrap(),
+                        data_dir.to_str().unwrap(),
+                        start_time,
+                        end_time
+                    )
+                }
+                MigrateCommands::OpenTSDB { opentsdb_url, data_dir, start_time, end_time } => {
+                    let data_dir = data_dir.unwrap_or(cli.data_dir);
+                    tools::MigrationTool::migrate_from_opentsdb(
+                        &opentsdb_url,
+                        data_dir.to_str().unwrap(),
+                        start_time,
+                        end_time
+                    )
+                }
+            }
         }
         Some(Commands::Verify { data_dir, mode }) => {
             let data_dir = data_dir.unwrap_or(cli.data_dir);
@@ -237,6 +508,101 @@ async fn main() -> anyhow::Result<()> {
                 workers,
                 &format
             )
+        }
+        Some(Commands::Stress { data_dir, duration, write_threads, query_threads, write_rate, query_rate, labels_per_series, samples_per_write, series_count }) => {
+            let data_dir = data_dir.unwrap_or(cli.data_dir);
+            let config = stress_test::StressTestConfig {
+                data_dir: data_dir.to_str().unwrap().to_string(),
+                duration,
+                write_threads,
+                query_threads,
+                write_rate,
+                query_rate,
+                labels_per_series,
+                samples_per_write,
+                series_count,
+            };
+            let stress_test = stress_test::StressTest::new(config);
+            stress_test.run();
+            Ok(())
+        }
+        Some(Commands::Tiered { command }) => {
+            match command {
+                TieredCommands::Status { data_dir } => {
+                    let data_dir = data_dir.unwrap_or(cli.data_dir);
+                    tools::OpsTool::status(data_dir.to_str().unwrap())
+                }
+                TieredCommands::Migrate { data_dir } => {
+                    let data_dir = data_dir.unwrap_or(cli.data_dir);
+                    tools::OpsTool::migrate(data_dir.to_str().unwrap())
+                }
+                TieredCommands::Configure { data_dir, tier, retention_hours, max_size_gb } => {
+                    let data_dir = data_dir.unwrap_or(cli.data_dir);
+                    tools::OpsTool::configure(data_dir.to_str().unwrap(), &tier, retention_hours, max_size_gb)
+                }
+            }
+        }
+        Some(Commands::Cluster { command }) => {
+            match command {
+                ClusterCommands::Status => {
+                    tools::ClusterTool::status()
+                }
+                ClusterCommands::ListNodes => {
+                    tools::ClusterTool::list_nodes()
+                }
+                ClusterCommands::AddNode { address } => {
+                    tools::ClusterTool::add_node(&address)
+                }
+                ClusterCommands::RemoveNode { address } => {
+                    tools::ClusterTool::remove_node(&address)
+                }
+            }
+        }
+        Some(Commands::Config { command }) => {
+            match command {
+                ConfigCommands::Show { config_file } => {
+                    tools::ConfigTool::show(&config_file)
+                }
+                ConfigCommands::Validate { config_file } => {
+                    tools::ConfigTool::validate(&config_file)
+                }
+                ConfigCommands::Generate { output_file } => {
+                    tools::ConfigTool::generate(&output_file)
+                }
+            }
+        }
+        Some(Commands::Monitoring { command }) => {
+            match command {
+                MonitoringCommands::Metrics => {
+                    tools::MonitoringTool::metrics()
+                }
+                MonitoringCommands::Alerts => {
+                    tools::MonitoringTool::alerts()
+                }
+                MonitoringCommands::Health => {
+                    tools::MonitoringTool::health()
+                }
+            }
+        }
+        Some(Commands::Data { command }) => {
+            match command {
+                DataCommands::ListSeries { data_dir, pattern } => {
+                    let data_dir = data_dir.unwrap_or(cli.data_dir);
+                    tools::DataTool::list_series(data_dir.to_str().unwrap(), &pattern)
+                }
+                DataCommands::DeleteSeries { data_dir, pattern } => {
+                    let data_dir = data_dir.unwrap_or(cli.data_dir);
+                    tools::DataTool::delete_series(data_dir.to_str().unwrap(), &pattern)
+                }
+                DataCommands::ExportSeries { data_dir, pattern, output_file } => {
+                    let data_dir = data_dir.unwrap_or(cli.data_dir);
+                    tools::DataTool::export_series(data_dir.to_str().unwrap(), &pattern, &output_file)
+                }
+                DataCommands::ImportSeries { data_dir, input_file } => {
+                    let data_dir = data_dir.unwrap_or(cli.data_dir);
+                    tools::DataTool::import_series(data_dir.to_str().unwrap(), &input_file)
+                }
+            }
         }
         None => {
             // Default to server mode

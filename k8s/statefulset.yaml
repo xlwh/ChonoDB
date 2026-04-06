@@ -15,6 +15,10 @@ spec:
     metadata:
       labels:
         app: chronodb
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: chronodb
@@ -25,6 +29,9 @@ spec:
         ports:
         - containerPort: 9090
           name: http
+          protocol: TCP
+        - containerPort: 9091
+          name: remote-write
           protocol: TCP
         resources:
           requests:
@@ -38,6 +45,10 @@ spec:
           mountPath: /var/lib/chronodb
         - name: config
           mountPath: /etc/chronodb
+        - name: rules
+          mountPath: /etc/chronodb/rules
+        - name: targets
+          mountPath: /etc/chronodb/targets
         - name: logs
           mountPath: /var/log/chronodb
         livenessProbe:
@@ -61,10 +72,22 @@ spec:
           value: "info"
         - name: RUST_BACKTRACE
           value: "1"
+        - name: CHRONODB_DATA_DIR
+          value: "/var/lib/chronodb"
+        - name: CHRONODB_LOG_DIR
+          value: "/var/log/chronodb"
+        - name: CHRONODB_CONFIG_FILE
+          value: "/etc/chronodb/chronodb.yaml"
       volumes:
       - name: config
         configMap:
           name: chronodb-config
+      - name: rules
+        configMap:
+          name: chronodb-rules
+      - name: targets
+        configMap:
+          name: chronodb-targets
       - name: logs
         emptyDir: {}
   volumeClaimTemplates:
@@ -75,3 +98,4 @@ spec:
       resources:
         requests:
           storage: 100Gi
+      storageClassName: standard

@@ -47,7 +47,7 @@ RUN apt-get update && apt-get install -y \
 
 # 创建用户和目录
 RUN groupadd -r chronodb && useradd -r -g chronodb chronodb && \
-    mkdir -p /var/lib/chronodb /var/log/chronodb /etc/chronodb && \
+    mkdir -p /var/lib/chronodb /var/log/chronodb /etc/chronodb /etc/chronodb/rules /etc/chronodb/targets && \
     chown -R chronodb:chronodb /var/lib/chronodb /var/log/chronodb
 
 # 复制二进制文件
@@ -59,15 +59,21 @@ COPY config/chronodb.yaml /etc/chronodb/
 
 # 复制监控配置
 COPY config/prometheus.yml /etc/chronodb/
+COPY config/alertmanager.yml /etc/chronodb/
+
+# 复制规则和目标配置
+COPY config/rules/ /etc/chronodb/rules/
+COPY config/targets/ /etc/chronodb/targets/
 
 # 设置权限
-RUN chmod +x /usr/local/bin/chronodb-server /usr/local/bin/chronodb
+RUN chmod +x /usr/local/bin/chronodb-server /usr/local/bin/chronodb && \
+    chown -R chronodb:chronodb /etc/chronodb
 
 # 切换到非 root 用户
 USER chronodb
 
 # 暴露端口
-EXPOSE 9090
+EXPOSE 9090 9091
 
 # 数据卷
 VOLUME ["/var/lib/chronodb", "/var/log/chronodb"]

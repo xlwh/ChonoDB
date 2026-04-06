@@ -11,6 +11,7 @@ pub use local::LocalStorage;
 use crate::error::Result;
 use bytes::Bytes;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::info;
 
 /// 存储后端类型
@@ -38,18 +39,20 @@ impl BackendType {
 
 /// 统一存储接口
 pub struct ObjectStorage {
-    backend: Box<dyn StorageBackend>,
+    backend: Arc<dyn StorageBackend>,
+    backend_type: BackendType,
+    options: StorageOptions,
 }
 
 impl ObjectStorage {
     /// 创建新的存储实例
     pub async fn new(backend_type: BackendType, options: StorageOptions) -> Result<Self> {
-        let backend: Box<dyn StorageBackend> = match backend_type {
-            BackendType::Local => Box::new(LocalStorage::new(options).await?),
-            BackendType::S3 => Box::new(S3Storage::new(options).await?),
+        let backend: Arc<dyn StorageBackend> = match backend_type {
+            BackendType::Local => Arc::new(LocalStorage::new(options.clone()).await?),
+            BackendType::S3 => Arc::new(S3Storage::new(options.clone()).await?),
             BackendType::Gcs => {
                 let gcs_config = GcsConfig::default();
-                Box::new(GcsStorage::new(gcs_config).await?)
+                Arc::new(GcsStorage::new(gcs_config).await?)
             }
             BackendType::Azure => {
                 return Err(crate::error::Error::NotImplemented(
@@ -58,13 +61,27 @@ impl ObjectStorage {
             }
             BackendType::Minio => {
                 // MinIO 使用 S3 兼容接口
-                Box::new(S3Storage::new(options).await?)
+                Arc::new(S3Storage::new(options.clone()).await?)
             }
         };
 
         info!("Object storage initialized: {:?}", backend_type);
         
-        Ok(Self { backend })
+        Ok(Self { 
+            backend, 
+            backend_type, 
+            options 
+        })
+    }
+
+    /// 获取后端类型
+    pub fn backend_type(&self) -> BackendType {
+        self.backend_type
+    }
+
+    /// 获取存储选项
+    pub fn options(&self) -> &StorageOptions {
+        &self.options
     }
 
     /// 上传对象
@@ -99,28 +116,97 @@ impl ObjectStorage {
 
     /// 批量上传
     pub async fn batch_put(&self, objects: HashMap<String, Bytes>) -> Result<()> {
+        // 并行上传
+        let mut tasks = Vec::new();
         for (key, data) in objects {
-            self.put(&key, data).await?;
+            let backend = self.backend.clone();
+            let key = key.clone();
+            tasks.push(tokio::spawn(async move {
+                backend.put(&key, data).await
+            }));
         }
+
+        for task in tasks {
+            task.await??;
+        }
+
         Ok(())
     }
 
     /// 批量下载
     pub async fn batch_get(&self, keys: &[String]) -> Result<HashMap<String, Bytes>> {
-        let mut results = HashMap::new();
+        // 并行下载
+        let mut tasks: Vec<tokio::task::JoinHandle<Result<(String, Bytes)>>> = Vec::new();
         for key in keys {
-            let data = self.get(key).await?;
-            results.insert(key.clone(), data);
+            let backend = self.backend.clone();
+            let key = key.clone();
+            tasks.push(tokio::spawn(async move {
+                let data = backend.get(&key).await?;
+                Ok((key, data))
+            }));
         }
+
+        let mut results = HashMap::new();
+        for task in tasks {
+            let (key, data) = task.await??;
+            results.insert(key, data);
+        }
+
         Ok(results)
     }
 
     /// 批量删除
     pub async fn batch_delete(&self, keys: &[String]) -> Result<()> {
+        // 并行删除
+        let mut tasks: Vec<tokio::task::JoinHandle<Result<()>>> = Vec::new();
         for key in keys {
-            self.delete(key).await?;
+            let backend = self.backend.clone();
+            let key = key.clone();
+            tasks.push(tokio::spawn(async move {
+                backend.delete(&key).await
+            }));
         }
+
+        for task in tasks {
+            task.await??;
+        }
+
         Ok(())
+    }
+
+    /// 上传大对象（分块上传）
+    pub async fn put_large_object(&self, key: &str, data: Bytes, chunk_size: usize) -> Result<()> {
+        // 这里可以实现分块上传逻辑
+        // 简化实现，直接调用 put
+        self.put(key, data).await
+    }
+
+    /// 下载大对象（分块下载）
+    pub async fn get_large_object(&self, key: &str, chunk_size: usize) -> Result<Bytes> {
+        // 这里可以实现分块下载逻辑
+        // 简化实现，直接调用 get
+        self.get(key).await
+    }
+
+    /// 复制对象
+    pub async fn copy_object(&self, source_key: &str, destination_key: &str) -> Result<()> {
+        // 先下载再上传
+        let data = self.get(source_key).await?;
+        self.put(destination_key, data).await
+    }
+
+    /// 移动对象
+    pub async fn move_object(&self, source_key: &str, destination_key: &str) -> Result<()> {
+        // 先复制再删除
+        self.copy_object(source_key, destination_key).await?;
+        self.delete(source_key).await
+    }
+
+    /// 获取存储使用情况
+    pub async fn get_usage(&self) -> Result<(u64, u64)> {
+        // 这里可以实现获取存储使用情况的逻辑
+        // 简化实现，返回 0
+        Ok((0, 0))
     }
 }
 

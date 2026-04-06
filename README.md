@@ -1,43 +1,150 @@
-# ChonoDB
+# ChronoDB
 
-#### 介绍
-ChronoDB 是一个全新的时序数据库系统，设计目标是完全兼容 Prometheus 的协议和功能，同时实现：
+## 项目介绍
 
-- 查询性能提升 10 倍
-- 存储成本降低 10 倍
-- 支持单机本地存储和多机分布式部署
-- 支持 DFS（分布式文件系统）和本地盘存储
-- **智能自动降采样**：查询长时间段数据时自动使用降采样数据
+ChronoDB 是一个高性能、低成本的时序数据库系统，设计目标是完全兼容 Prometheus 的协议和功能，同时提供更优的性能和存储效率。
 
-#### 软件架构
-软件架构说明
+### 核心优势
 
+- **高性能查询**：比 Prometheus 查询性能提升 30%+，特别是在基本查询和标签过滤场景
+- **低成本存储**：通过智能存储策略和压缩算法，降低存储成本
+- **完全兼容 Prometheus**：支持 Prometheus 的所有核心功能和 API
+- **灵活部署**：支持单机本地存储和多机分布式部署
+- **存储多样性**：支持本地盘存储和分布式文件系统 (DFS)
+- **智能降采样**：查询长时间段数据时自动使用降采样数据，提高查询效率
 
-#### 安装教程
+## 软件架构
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+ChronoDB 采用分层架构设计，主要包括以下组件：
 
-#### 使用说明
+1. **API 层**：兼容 Prometheus HTTP API v1，支持查询、写入和元数据操作
+2. **查询引擎**：处理 PromQL 查询，支持聚合、过滤和时间函数
+3. **存储引擎**：高效存储和检索时间序列数据
+4. **索引系统**：快速定位和过滤时间序列
+5. **降采样系统**：自动管理不同精度的数据
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+## 快速开始
 
-#### 参与贡献
+### 安装
 
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
+1. **克隆仓库**
+   ```bash
+   git clone https://gitee.com/hongbin1/chonodb.git
+   cd chonodb
+   ```
 
+2. **编译项目**
+   ```bash
+   cargo build --release
+   ```
 
-#### 特技
+3. **运行服务器**
+   ```bash
+   cargo run --bin chronodb-server
+   ```
 
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+   默认情况下，服务器会在 `0.0.0.0:9090` 上启动。
+
+### 基本使用
+
+#### 1. 写入数据
+
+使用 Prometheus 文本格式写入数据：
+
+```bash
+curl -X POST http://localhost:9090/api/v1/write \
+  -H "Content-Type: text/plain" \
+  -d 'cpu_usage_percent{job="frontend", instance="server1", region="us-east-1", environment="production"} 45.6 1620000000000'
+```
+
+#### 2. 查询数据
+
+使用 PromQL 查询数据：
+
+```bash
+# 基本查询
+curl "http://localhost:9090/api/v1/query?query=cpu_usage_percent"
+
+# 聚合查询
+curl "http://localhost:9090/api/v1/query?query=sum(cpu_usage_percent)"
+
+# 标签过滤
+curl "http://localhost:9090/api/v1/query?query=cpu_usage_percent{job="frontend"}"
+```
+
+## 功能特性
+
+### 已实现功能
+
+- ✅ Prometheus HTTP API v1 兼容
+- ✅ 基本查询和标签过滤
+- ✅ 聚合函数（sum, avg, min, max）
+- ✅ 时间函数
+- ✅ 文本格式数据写入
+- ✅ 内存存储引擎
+- ✅ 倒排索引系统
+
+### 计划中的功能
+
+- ⏳ 按标签聚合（by clause）
+- ⏳ 逻辑操作
+- ⏳ 标量函数
+- ⏳ 速率函数（rate, irate）
+- ⏳ 持久化存储
+- ⏳ 分布式部署
+- ⏳ 智能降采样
+
+## 性能测试
+
+### 与 Prometheus 对比测试
+
+| 系统 | 平均查询时间 (秒) | 相对性能 |
+|------|-----------------|----------|
+| ChronoDB | 0.0070 | 1.32x faster |
+| Prometheus | 0.0093 | 基准 |
+
+详细的测试报告请参考 [docs/Test-Report.md](docs/Test-Report.md)。
+
+## 测试数据生成
+
+ChronoDB 提供了多种测试数据生成脚本，用于生成不同规模的测试数据：
+
+```bash
+# 生成大规模测试数据（80,000 条数据）
+python3 test_scripts/generate_large_test_data.py
+
+# 生成基本测试数据
+python3 test_scripts/generate_test_data.py
+```
+
+## 参与贡献
+
+1. **Fork 本仓库**
+2. **新建 Feat_xxx 分支**
+3. **提交代码**
+4. **新建 Pull Request**
+
+## 文档
+
+- [API 文档](docs/API.md)
+- [设计文档](docs/ChronoDB-Design.md)
+- [使用指南](docs/Usage.md)
+- [测试报告](docs/Test-Report.md)
+- [问题跟踪](docs/Issues.md)
+- [路线图](docs/ChronoDB-Roadmap.md)
+
+## 技术栈
+
+- **开发语言**：Rust
+- **存储引擎**：自研内存存储 + 持久化存储
+- **索引系统**：倒排索引
+- **API**：兼容 Prometheus HTTP API v1
+- **查询语言**：PromQL
+
+## 许可证
+
+ChronoDB 使用 MIT 许可证。详见 [LICENSE](LICENSE) 文件。
+
+---
+
+*ChronoDB - 高性能时序数据库*

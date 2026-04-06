@@ -24,6 +24,12 @@ pub struct ServerConfig {
     /// 目标配置
     pub targets: TargetsConfig,
     
+    /// 内存配置
+    pub memory: MemoryConfig,
+    
+    /// 压缩配置
+    pub compression: CompressionConfig,
+    
     /// 日志配置
     pub log: LogConfig,
 }
@@ -62,6 +68,18 @@ pub struct QueryConfig {
     
     /// 启用自动降采样
     pub enable_auto_downsampling: bool,
+    
+    /// 降采样精度选择策略: auto | conservative | aggressive
+    pub downsample_policy: String,
+    
+    /// 查询缓存大小
+    pub query_cache_size: String,
+    
+    /// 启用查询结果缓存
+    pub enable_query_cache: bool,
+    
+    /// 查询缓存TTL（秒）
+    pub query_cache_ttl: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +104,54 @@ pub struct TargetsConfig {
     
     /// 抓取超时（秒）
     pub scrape_timeout: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    /// MemStore 大小
+    pub memstore_size: String,
+    
+    /// WAL 大小
+    pub wal_size: String,
+    
+    /// 查询缓存大小
+    pub query_cache_size: String,
+    
+    /// 最大内存使用率
+    pub max_memory_usage: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressionConfig {
+    /// 时间列压缩
+    pub time_column: ColumnCompressionConfig,
+    
+    /// 值列压缩
+    pub value_column: ValueColumnCompressionConfig,
+    
+    /// 标签列压缩
+    pub label_column: ColumnCompressionConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnCompressionConfig {
+    /// 压缩算法
+    pub algorithm: String,
+    
+    /// 压缩级别
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValueColumnCompressionConfig {
+    /// 压缩算法
+    pub algorithm: String,
+    
+    /// 压缩级别
+    pub level: i32,
+    
+    /// 使用预测编码
+    pub use_prediction: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +185,10 @@ impl Default for ServerConfig {
                 enable_vectorized: true,
                 enable_parallel: true,
                 enable_auto_downsampling: true,
+                downsample_policy: "auto".to_string(),
+                query_cache_size: "2GB".to_string(),
+                enable_query_cache: true,
+                query_cache_ttl: 300,
             },
             rules: RulesConfig {
                 rule_files: vec![],
@@ -129,6 +199,27 @@ impl Default for ServerConfig {
                 config_file: None,
                 scrape_interval: 60,
                 scrape_timeout: 10,
+            },
+            memory: MemoryConfig {
+                memstore_size: "4GB".to_string(),
+                wal_size: "1GB".to_string(),
+                query_cache_size: "2GB".to_string(),
+                max_memory_usage: "80%".to_string(),
+            },
+            compression: CompressionConfig {
+                time_column: ColumnCompressionConfig {
+                    algorithm: "zstd".to_string(),
+                    level: 3,
+                },
+                value_column: ValueColumnCompressionConfig {
+                    algorithm: "zstd".to_string(),
+                    level: 3,
+                    use_prediction: true,
+                },
+                label_column: ColumnCompressionConfig {
+                    algorithm: "dictionary".to_string(),
+                    level: 0,
+                },
             },
             log: LogConfig {
                 level: "info".to_string(),

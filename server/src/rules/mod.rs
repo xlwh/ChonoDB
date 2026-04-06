@@ -1,6 +1,33 @@
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 
+// 序列化支持
+mod humantime_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::time::Duration;
+
+    pub fn serialize<S>(duration: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match duration {
+            Some(d) => serializer.serialize_str(&format!("{}s", d.as_secs())),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = Option::<String>::deserialize(deserializer)?;
+        match s {
+            Some(s) => humantime::parse_duration(&s).map(Some).map_err(serde::de::Error::custom),
+            None => Ok(None),
+        }
+    }
+}
+
 pub mod alerting;
 pub mod recording;
 pub mod evaluator;
@@ -23,6 +50,7 @@ pub struct RuleGroup {
     pub name: String,
     
     /// 评估间隔
+    #[serde(with = "humantime_serde")]
     pub interval: Option<Duration>,
     
     /// 限制（并发评估数量）

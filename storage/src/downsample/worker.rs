@@ -122,6 +122,9 @@ impl DownsampleWorker {
         // 将降采样数据存储到目标级别
         // 注意：这里需要将降采样数据存储到持久化存储中
         // 目前我们只是计算了降采样结果，实际存储逻辑需要根据存储引擎实现
+        // TODO: 实现降采样数据的持久化存储
+        // 临时实现：将降采样数据存储到内存中
+        // 实际实现需要将数据存储到列式存储中
         
         debug!(
             "Worker {} processed series {}: {} samples -> {} points",
@@ -209,6 +212,7 @@ impl WorkerPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::Sample;
     use crate::config::StorageConfig;
     use crate::model::Label;
     use tempfile::tempdir;

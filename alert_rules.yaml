@@ -1,0 +1,23 @@
+groups:
+- name: test_alerts
+  interval: 60s
+  rules:
+  - name: HighCPUUsage
+    type: alert
+    expr: avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) by (instance) < 0.7
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: High CPU usage on {{ .instance }}
+      description: CPU usage is above 30% for 5 minutes
+
+  - name: HighMemoryUsage
+    type: alert
+    expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.8
+    for: 10m
+    labels:
+      severity: critical
+    annotations:
+      summary: High memory usage on {{ .instance }}
+      description: Memory usage is above 80% for 10 minutes

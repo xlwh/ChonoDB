@@ -17,6 +17,7 @@ pub struct AlertRule {
     pub condition: AlertCondition,
     
     /// 持续时间
+    #[serde(rename = "for")]
     #[serde(with = "humantime_serde")]
     pub duration: Duration,
     

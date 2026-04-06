@@ -1,4 +1,7 @@
 use thiserror::Error;
+use tokio::task::JoinError;
+use walkdir::Error as WalkdirError;
+use std::path::StripPrefixError;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -55,6 +58,15 @@ pub enum Error {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Join error: {0}")]
+    JoinError(#[from] tokio::task::JoinError),
+
+    #[error("Walkdir error: {0}")]
+    Walkdir(#[from] WalkdirError),
+
+    #[error("Path error: {0}")]
+    Path(#[from] StripPrefixError),
 }
 
 impl From<Box<bincode::ErrorKind>> for Error {

@@ -92,7 +92,33 @@ impl MemStore {
         start: i64,
         end: i64,
     ) -> Result<Vec<TimeSeries>> {
-        self.query_with_downsample(label_matchers, start, end, DownsampleLevel::L0)
+        // 根据时间范围自动选择降采样级别
+        let downsample_level = self.auto_select_downsample_level(start, end);
+        self.query_with_downsample(label_matchers, start, end, downsample_level)
+    }
+
+    /// 根据时间范围自动选择降采样级别
+    fn auto_select_downsample_level(&self, start: i64, end: i64) -> DownsampleLevel {
+        let duration = end - start;
+        
+        // 时间范围（毫秒）
+        const HOUR: i64 = 3600 * 1000;
+        const DAY: i64 = 24 * HOUR;
+        const WEEK: i64 = 7 * DAY;
+        const MONTH: i64 = 30 * DAY;
+        
+        match duration {
+            // 小于 1 小时：使用原始数据
+            d if d < HOUR => DownsampleLevel::L0,
+            // 1 小时到 24 小时：使用 L1（1 分钟降采样）
+            d if d < DAY => DownsampleLevel::L1,
+            // 24 小时到 7 天：使用 L2（10 分钟降采样）
+            d if d < WEEK => DownsampleLevel::L2,
+            // 7 天到 30 天：使用 L3（1 小时降采样）
+            d if d < MONTH => DownsampleLevel::L3,
+            // 大于 30 天：使用 L4（6 小时降采样）
+            _ => DownsampleLevel::L4,
+        }
     }
 
     pub fn query_with_downsample(
@@ -133,6 +159,11 @@ impl MemStore {
 
     fn apply_downsampling(&self, samples: Vec<Sample>, level: DownsampleLevel) -> Vec<Sample> {
         if samples.is_empty() {
+            return samples;
+        }
+        
+        // For L0 (original data), return the samples as-is
+        if level == DownsampleLevel::L0 {
             return samples;
         }
         
@@ -210,10 +241,7 @@ impl MemStore {
 
     fn all_series_ids(&self) -> Vec<TimeSeriesId> {
         let index = self.head.index();
-        index.label_values("__name__")
-            .into_iter()
-            .flat_map(|v| index.lookup("__name__", &v))
-            .collect()
+        index.all_series_ids()
     }
 
     pub fn get_series(&self, series_id: TimeSeriesId) -> Option<TimeSeries> {
@@ -254,6 +282,16 @@ impl MemStore {
 
     pub fn close(&self) -> Result<()> {
         self.flush()
+    }
+
+    /// 获取所有时间序列ID
+    pub fn get_all_series_ids(&self) -> Vec<TimeSeriesId> {
+        self.all_series_ids()
+    }
+
+    /// 获取时间序列的标签
+    pub fn get_series_labels(&self, series_id: TimeSeriesId) -> Option<Labels> {
+        self.head.get_series_labels(series_id)
     }
 }
 

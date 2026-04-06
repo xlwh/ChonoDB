@@ -7,6 +7,12 @@ pub enum ColumnType {
     Timestamp,
     Value,
     Label,
+    Min,
+    Max,
+    Avg,
+    Sum,
+    Count,
+    Last,
     DownsampleL1,
     DownsampleL2,
     DownsampleL3,
@@ -19,6 +25,12 @@ impl ColumnType {
             ColumnType::Timestamp => "time.col",
             ColumnType::Value => "value.col",
             ColumnType::Label => "labels.col",
+            ColumnType::Min => "min.col",
+            ColumnType::Max => "max.col",
+            ColumnType::Avg => "avg.col",
+            ColumnType::Sum => "sum.col",
+            ColumnType::Count => "count.col",
+            ColumnType::Last => "last.col",
             ColumnType::DownsampleL1 => "downsample_L1.col",
             ColumnType::DownsampleL2 => "downsample_L2.col",
             ColumnType::DownsampleL3 => "downsample_L3.col",
@@ -99,6 +111,66 @@ impl ColumnBuilder {
         }
     }
 
+    pub fn min(compression_level: i32) -> Self {
+        Self {
+            column_type: ColumnType::Min,
+            compression_level,
+            timestamps: Vec::new(),
+            values: Vec::new(),
+            labels: Vec::new(),
+        }
+    }
+
+    pub fn max(compression_level: i32) -> Self {
+        Self {
+            column_type: ColumnType::Max,
+            compression_level,
+            timestamps: Vec::new(),
+            values: Vec::new(),
+            labels: Vec::new(),
+        }
+    }
+
+    pub fn avg(compression_level: i32) -> Self {
+        Self {
+            column_type: ColumnType::Avg,
+            compression_level,
+            timestamps: Vec::new(),
+            values: Vec::new(),
+            labels: Vec::new(),
+        }
+    }
+
+    pub fn sum(compression_level: i32) -> Self {
+        Self {
+            column_type: ColumnType::Sum,
+            compression_level,
+            timestamps: Vec::new(),
+            values: Vec::new(),
+            labels: Vec::new(),
+        }
+    }
+
+    pub fn count(compression_level: i32) -> Self {
+        Self {
+            column_type: ColumnType::Count,
+            compression_level,
+            timestamps: Vec::new(),
+            values: Vec::new(),
+            labels: Vec::new(),
+        }
+    }
+
+    pub fn last(compression_level: i32) -> Self {
+        Self {
+            column_type: ColumnType::Last,
+            compression_level,
+            timestamps: Vec::new(),
+            values: Vec::new(),
+            labels: Vec::new(),
+        }
+    }
+
     pub fn add_timestamp(&mut self, timestamp: i64) {
         self.timestamps.push(timestamp);
     }
@@ -124,6 +196,12 @@ impl ColumnBuilder {
             ColumnType::Timestamp => self.build_timestamp_column(),
             ColumnType::Value => self.build_value_column(),
             ColumnType::Label => self.build_label_column(),
+            ColumnType::Min => self.build_value_column(),
+            ColumnType::Max => self.build_value_column(),
+            ColumnType::Avg => self.build_value_column(),
+            ColumnType::Sum => self.build_value_column(),
+            ColumnType::Count => self.build_value_column(),
+            ColumnType::Last => self.build_value_column(),
             _ => Err(Error::InvalidData("Unsupported column type".to_string())),
         }
     }
@@ -145,15 +223,23 @@ impl ColumnBuilder {
     }
 
     fn build_value_column(self) -> Result<Column> {
+        // 使用预测编码
+        let residuals = crate::compression::PredictionEncoder::encode(
+            &self.values.iter().enumerate().map(|(i, v)| {
+                crate::model::Sample::new(i as i64 * 1000, *v)
+            }).collect::<Vec<_>>()
+        )?;
+        
+        // 将残差转换为整数并使用 Delta 编码
         let mut encoder = DeltaEncoder::new();
-        let values_as_int: Vec<i64> = self.values.iter().map(|v| v.to_bits() as i64).collect();
+        let values_as_int: Vec<i64> = residuals.iter().map(|v| v.to_bits() as i64).collect();
         let encoded = encoder.encode_batch(&values_as_int)?;
         
         let uncompressed_size = self.values.len() * 8;
         let compressed = compress_zstd(&encoded, self.compression_level)?;
         
         Ok(Column {
-            column_type: ColumnType::Value,
+            column_type: self.column_type,
             data: compressed,
             uncompressed_size,
             compressed_size: encoded.len(),
@@ -199,21 +285,33 @@ impl ColumnBuilder {
 
 pub fn decode_timestamp_column(column: &Column) -> Result<Vec<i64>> {
     let decompressed = decompress_zstd(&column.data)?;
-    let mut decoder = DeltaOfDeltaEncoder::new();
-    let timestamps = decoder.encode_batch(&decompressed.chunks(8).map(|c| {
-        i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])
-    }).collect::<Vec<_>>())?;
-    Ok(timestamps.chunks(8).map(|c| {
-        i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])
-    }).collect())
+    let mut timestamps = Vec::new();
+    let mut current = 0i64;
+    let mut delta = 0i64;
+    
+    for chunk in decompressed.chunks(8) {
+        let delta_of_delta = i64::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7]]);
+        delta += delta_of_delta;
+        current += delta;
+        timestamps.push(current);
+    }
+    
+    Ok(timestamps)
 }
 
 pub fn decode_value_column(column: &Column) -> Result<Vec<f64>> {
     let decompressed = decompress_zstd(&column.data)?;
-    let values: Vec<f64> = decompressed
-        .chunks(8)
-        .map(|c| f64::from_bits(u64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])))
-        .collect();
+    
+    // 解码 Delta 编码的数据
+    let mut decoder = crate::compression::DeltaDecoder::new();
+    let decoded_int = decoder.decode(&decompressed)?;
+    
+    // 将整数转换回浮点数
+    let residuals: Vec<f64> = decoded_int.iter().map(|&v| f64::from_bits(v as u64)).collect();
+    
+    // 解码预测编码
+    let values = crate::compression::PredictionEncoder::decode(&residuals)?;
+    
     Ok(values)
 }
 

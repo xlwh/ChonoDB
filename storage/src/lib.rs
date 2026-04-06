@@ -18,6 +18,8 @@ pub mod compaction;
 pub mod rpc;
 pub mod raft;
 pub mod metadata;
+pub mod backup;
+pub mod fault_injection;
 
 pub use error::{Error, Result};
 pub use model::{Label, Labels, Sample, TimeSeries, TimeSeriesId};

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{info, warn};
 use chronodb_storage::{MemStore, StorageConfig};
 use crate::config::ServerConfig;
 use crate::rules::{RuleManager, AlertManager};
@@ -30,7 +31,19 @@ impl ServerState {
         let memstore = Arc::new(MemStore::new(storage_config)?);
         
         // 创建规则管理器
-        let rule_manager = Arc::new(RwLock::new(RuleManager::new()));
+        let mut rule_manager = RuleManager::new();
+        
+        // 加载告警规则文件
+        for rule_file in &config.rules.rule_files {
+            if rule_file.exists() {
+                info!("Loading rules from file: {:?}", rule_file);
+                rule_manager.load_from_file(rule_file)?;
+            } else {
+                warn!("Rule file not found: {:?}", rule_file);
+            }
+        }
+        
+        let rule_manager = Arc::new(RwLock::new(rule_manager));
         
         // 创建告警管理器
         let alert_manager = Arc::new(RwLock::new(AlertManager::new()));

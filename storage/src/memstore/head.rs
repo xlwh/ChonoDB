@@ -152,6 +152,7 @@ impl HeadBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::Label;
 
     #[test]
     fn test_head_block_basic() {

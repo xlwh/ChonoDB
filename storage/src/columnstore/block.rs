@@ -21,6 +21,7 @@ pub struct BlockMeta {
     pub columns: Vec<String>,
     pub index_offset: u64,
     pub index_size: u64,
+    pub downsample_level: Option<super::DownsampleLevel>,
 }
 
 impl BlockMeta {
@@ -38,6 +39,7 @@ impl BlockMeta {
             columns: Vec::new(),
             index_offset: 0,
             index_size: 0,
+            downsample_level: None,
         }
     }
 
@@ -144,57 +146,12 @@ impl BlockBuilder {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DownsampleLevel {
-    L0,
-    L1,
-    L2,
-    L3,
-    L4,
-}
-
-impl DownsampleLevel {
-    pub fn resolution_ms(&self) -> i64 {
-        match self {
-            DownsampleLevel::L0 => 10_000,
-            DownsampleLevel::L1 => 60_000,
-            DownsampleLevel::L2 => 300_000,
-            DownsampleLevel::L3 => 3_600_000,
-            DownsampleLevel::L4 => 86_400_000,
-        }
-    }
-
-    pub fn retention_days(&self) -> u32 {
-        match self {
-            DownsampleLevel::L0 => 7,
-            DownsampleLevel::L1 => 30,
-            DownsampleLevel::L2 => 90,
-            DownsampleLevel::L3 => 365,
-            DownsampleLevel::L4 => 3650,
-        }
-    }
-
-    pub fn from_query_range(range_ms: i64) -> Self {
-        let range_hours = range_ms / 3_600_000;
-        
-        if range_hours < 1 {
-            DownsampleLevel::L0
-        } else if range_hours < 24 {
-            DownsampleLevel::L1
-        } else if range_hours < 168 {
-            DownsampleLevel::L2
-        } else if range_hours < 720 {
-            DownsampleLevel::L3
-        } else {
-            DownsampleLevel::L4
-        }
-    }
-}
+// DownsampleLevel 枚举在 mod.rs 中定义
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownsampleData {
     pub series_id: u64,
-    pub level: DownsampleLevel,
+    pub level: super::DownsampleLevel,
     pub resolution_ms: i64,
     pub min_value: f64,
     pub max_value: f64,
@@ -207,7 +164,7 @@ pub struct DownsampleData {
 }
 
 impl DownsampleData {
-    pub fn new(series_id: u64, level: DownsampleLevel) -> Self {
+    pub fn new(series_id: u64, level: super::DownsampleLevel) -> Self {
         Self {
             series_id,
             level,
@@ -251,6 +208,7 @@ impl DownsampleData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::columnstore::DownsampleLevel;
 
     #[test]
     fn test_block_meta() {

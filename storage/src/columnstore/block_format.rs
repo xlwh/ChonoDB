@@ -374,7 +374,7 @@ impl BlockReader {
 
             if column_type == ColumnType::Timestamp {
                 let data = &self.data[offset + 22..offset + 22 + data_size];
-                return self.decode_timestamps(data);
+                return BlockReader::decode_timestamps(data);
             }
 
             offset += 22 + data_size;
@@ -383,7 +383,7 @@ impl BlockReader {
         Err(crate::error::Error::InvalidData("Timestamp column not found".to_string()))
     }
 
-    fn decode_timestamps(&self, data: &[u8]) -> Result<Vec<i64>> {
+    pub fn decode_timestamps(data: &[u8]) -> Result<Vec<i64>> {
         if data.len() < 16 {
             return Err(crate::error::Error::InvalidData("Timestamp data too short".to_string()));
         }
@@ -452,8 +452,8 @@ mod tests {
         let builder = BlockBuilder::new(BlockType::Data);
         let encoded = builder.encode_timestamps(&timestamps).unwrap();
 
-        let reader = BlockReader::new(Bytes::new()).unwrap();
-        let decoded = reader.decode_timestamps(&encoded).unwrap();
+        // 直接测试 decode_timestamps 方法
+        let decoded = BlockReader::decode_timestamps(&encoded).unwrap();
         assert_eq!(decoded, timestamps);
     }
 }

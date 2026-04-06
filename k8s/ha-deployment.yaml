@@ -1,0 +1,341 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chronodb
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chronodb-config
+  namespace: chronodb
+data:
+  chronodb.yaml: |
+    # ChronoDB 配置文件
+    # 高可用部署配置
+
+    # ============================================
+    # 服务器基础配置
+    # ============================================
+    listen_address: "0.0.0.0"
+    port: 9090
+    data_dir: "/var/lib/chronodb"
+
+    # ============================================
+    # 存储配置
+    # ============================================
+    storage:
+      # 存储模式: standalone | distributed
+      mode: distributed
+      
+      # 存储后端: local | s3 | gcs | minio
+      backend: local
+      
+      # 本地存储配置
+      local:
+        path: "/var/lib/chronodb/data"
+        max_disk_usage: "80%"
+
+    # ============================================
+    # 查询配置
+    # ============================================
+    query:
+      # 最大并发查询数
+      max_concurrent: 100
+      
+      # 查询超时（秒）
+      timeout: 120
+      
+      # 最大返回样本数
+      max_samples: 50000000
+      
+      # 启用向量化执行
+      enable_vectorized: true
+      
+      # 启用查询并行化
+      enable_parallel: true
+
+    # ============================================
+    # 分布式配置（当 mode 为 distributed 时使用）
+    # ============================================
+    distributed:
+      # 节点 ID
+      node_id: "node-1"
+      
+      # 元数据存储地址
+      metastore_endpoints:
+        - "etcd:2379"
+      
+      # 副本因子
+      replication_factor: 3
+      
+      # 分片数量
+      shard_count: 128
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chronodb-rules
+  namespace: chronodb
+data:
+  alerting.yml: |
+    groups:
+    - name: chronodb_alerts
+      rules:
+      - alert: HighSeriesCount
+        expr: chronodb_series_total > 1000000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High series count"
+          description: "The number of time series has exceeded 1,000,000"
+
+      - alert: HighQueryLatency
+        expr: chronodb_query_latency_ms > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High query latency"
+          description: "Average query latency has exceeded 1000ms"
+
+      - alert: ClusterNodeDown
+        expr: chronodb_cluster_healthy_nodes_total < chronodb_cluster_nodes_total
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cluster node down"
+          description: "One or more nodes in the cluster are down"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chronodb-targets
+  namespace: chronodb
+data:
+  targets.yml: |
+    scrape_configs:
+    - job_name: 'chronodb'
+      static_configs:
+      - targets: ['localhost:9090']
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: chronodb
+  namespace: chronodb
+  labels:
+    app: chronodb
+spec:
+  serviceName: chronodb
+  replicas: 3
+  selector:
+    matchLabels:
+      app: chronodb
+  template:
+    metadata:
+      labels:
+        app: chronodb
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: chronodb
+        image: chronodb/chronodb:latest
+        imagePullPolicy: IfNotPresent
+        args:
+        - --config.file=/etc/chronodb/chronodb.yaml
+        ports:
+        - containerPort: 9090
+          name: http
+          protocol: TCP
+        - containerPort: 9091
+          name: remote-write
+          protocol: TCP
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "8Gi"
+            cpu: "4"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/chronodb
+        - name: config
+          mountPath: /etc/chronodb
+        - name: rules
+          mountPath: /etc/chronodb/rules
+        - name: targets
+          mountPath: /etc/chronodb/targets
+        - name: logs
+          mountPath: /var/log/chronodb
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 9090
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9090
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        env:
+        - name: RUST_LOG
+          value: "info"
+        - name: RUST_BACKTRACE
+          value: "1"
+        - name: CHRONODB_DATA_DIR
+          value: "/var/lib/chronodb"
+        - name: CHRONODB_LOG_DIR
+          value: "/var/log/chronodb"
+        - name: CHRONODB_CONFIG_FILE
+          value: "/etc/chronodb/chronodb.yaml"
+        - name: CHRONODB_NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+      volumes:
+      - name: config
+        configMap:
+          name: chronodb-config
+      - name: rules
+        configMap:
+          name: chronodb-rules
+      - name: targets
+        configMap:
+          name: chronodb-targets
+      - name: logs
+        emptyDir: {}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 100Gi
+      storageClassName: standard
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chronodb
+  namespace: chronodb
+spec:
+  clusterIP: None
+  selector:
+    app: chronodb
+  ports:
+  - name: http
+    port: 9090
+    targetPort: 9090
+  - name: remote-write
+    port: 9091
+    targetPort: 9091
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chronodb-client
+  namespace: chronodb
+spec:
+  selector:
+    app: chronodb
+  ports:
+  - name: http
+    port: 9090
+    targetPort: 9090
+  - name: remote-write
+    port: 9091
+    targetPort: 9091
+  type: LoadBalancer
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: etcd
+  namespace: chronodb
+  labels:
+    app: etcd
+spec:
+  serviceName: etcd
+  replicas: 3
+  selector:
+    matchLabels:
+      app: etcd
+  template:
+    metadata:
+      labels:
+        app: etcd
+    spec:
+      containers:
+      - name: etcd
+        image: bitnami/etcd:latest
+        ports:
+        - containerPort: 2379
+          name: client
+        - containerPort: 2380
+          name: peer
+        env:
+        - name: ETCD_ROOT_PASSWORD
+          value: "etcdroot"
+        - name: ETCD_ADVERTISE_CLIENT_URLS
+          value: "http://etcd-0.etcd:2379,http://etcd-1.etcd:2379,http://etcd-2.etcd:2379"
+        - name: ETCD_LISTEN_CLIENT_URLS
+          value: "http://0.0.0.0:2379"
+        - name: ETCD_LISTEN_PEER_URLS
+          value: "http://0.0.0.0:2380"
+        - name: ETCD_INITIAL_ADVERTISE_PEER_URLS
+          value: "http://etcd-0.etcd:2380"
+        - name: ETCD_INITIAL_CLUSTER
+          value: "etcd-0=http://etcd-0.etcd:2380,etcd-1=http://etcd-1.etcd:2380,etcd-2=http://etcd-2.etcd:2380"
+        - name: ETCD_INITIAL_CLUSTER_STATE
+          value: "new"
+        - name: ETCD_CLUSTER_TOKEN
+          value: "etcd-cluster"
+        volumeMounts:
+        - name: etcd-data
+          mountPath: /bitnami/etcd
+  volumeClaimTemplates:
+  - metadata:
+      name: etcd-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+      storageClassName: standard
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: etcd
+  namespace: chronodb
+spec:
+  clusterIP: None
+  selector:
+    app: etcd
+  ports:
+  - name: client
+    port: 2379
+    targetPort: 2379
+  - name: peer
+    port: 2380
+    targetPort: 2380

@@ -16,13 +16,14 @@ use crate::remote_server;
 pub fn create_routes(state: Arc<ServerState>) -> Router {
     Router::new()
         // 查询 API
-        .route("/api/v1/query", post(handle_query))
-        .route("/api/v1/query_range", post(handle_query_range))
+        .route("/api/v1/query", axum::routing::MethodRouter::new().get(handle_query_get).post(handle_query_post))
+        .route("/api/v1/query_range", axum::routing::MethodRouter::new().get(handle_query_range_get).post(handle_query_range_post))
 
         // 元数据 API
         .route("/api/v1/series", get(handle_series))
         .route("/api/v1/labels", get(handle_labels))
         .route("/api/v1/label/:name/values", get(handle_label_values))
+        .route("/api/v1/metadata", get(handle_metadata))
 
         // 目标 API
         .route("/api/v1/targets", get(handle_targets))

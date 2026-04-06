@@ -1,3 +1,5 @@
+use crate::columnstore::{BlockWriter, BlockReader};
+use crate::flush::{BlockManager, BlockInfo};
 use crate::error::Result;
 use crate::model::{Sample, TimeSeries};
 use std::collections::HashMap;
@@ -16,6 +18,14 @@ pub struct TierConfig {
     pub path: PathBuf,
 }
 
+/// 数据访问模式
+#[derive(Debug, Clone, Default)]
+pub struct AccessPattern {
+    pub last_access_time: i64,
+    pub access_count: u64,
+    pub access_frequency: f64, // 访问频率（次/小时）
+}
+
 /// 数据层统计信息
 #[derive(Debug, Clone, Default)]
 pub struct TierStats {
@@ -24,19 +34,28 @@ pub struct TierStats {
     pub total_bytes: u64,
     pub file_count: u64,
     pub last_update: i64,
+    pub access_patterns: std::collections::HashMap<u64, AccessPattern>, // 系列ID -> 访问模式
 }
 
 /// 数据层
 pub struct DataTier {
     config: TierConfig,
     stats: Arc<RwLock<TierStats>>,
+    block_manager: Arc<RwLock<BlockManager>>,
 }
 
 impl DataTier {
     pub fn new(config: TierConfig) -> Self {
+        // 确保目录存在
+        std::fs::create_dir_all(&config.path).unwrap();
+        
+        // 初始化块管理器
+        let block_manager = BlockManager::new(&config.path).unwrap();
+        
         Self {
             config,
             stats: Arc::new(RwLock::new(TierStats::default())),
+            block_manager: Arc::new(RwLock::new(block_manager)),
         }
     }
 
@@ -56,16 +75,43 @@ impl DataTier {
     }
 
     /// 写入时间序列
-    pub async fn write(&self, series: &TimeSeries) -> Result<()> {
+    pub async fn write(&self, series: &TimeSeries) -> Result<u64> {
         debug!("Writing series {} to tier {}", series.id, self.config.name);
+        
+        // 创建块写入器
+        let block_id = chrono::Utc::now().timestamp_millis() as u64;
+        let mut writer = BlockWriter::new(&self.config.path, block_id, self.config.compression_level);
+        
+        // 添加时间序列数据
+        writer.add_series(series.id, series.labels.clone(), series.samples.clone());
+        
+        // 写入块
+        let block = writer.write()?;
+        
+        // 创建 BlockInfo
+        let block_info = BlockInfo {
+            block_id: block.meta.block_id,
+            min_timestamp: block.meta.min_timestamp,
+            max_timestamp: block.meta.max_timestamp,
+            series_count: block.meta.total_series,
+            sample_count: block.meta.total_samples,
+            compaction_level: block.meta.compaction_level,
+            path: self.config.path.join(format!("block_{}.bin", block.meta.block_id)),
+        };
+        
+        // 更新块管理器
+        let mut block_manager = self.block_manager.write().await;
+        block_manager.add_block(block_info);
         
         // 更新统计
         let mut stats = self.stats.write().await;
         stats.series_count += 1;
         stats.sample_count += series.samples.len() as u64;
+        stats.total_bytes += block.total_size() as u64;
+        stats.file_count += 1;
         stats.last_update = chrono::Utc::now().timestamp_millis();
         
-        Ok(())
+        Ok(block_id)
     }
 
     /// 查询时间序列
@@ -80,9 +126,104 @@ impl DataTier {
             series_id, self.config.name, start, end
         );
         
-        // 这里应该实现实际的查询逻辑
-        // 简化实现，返回空结果
-        Ok(vec![])
+        let block_manager = self.block_manager.read().await;
+        let blocks = block_manager.get_blocks_in_time_range(start, end);
+        
+        // 并行读取多个块
+        let mut tasks = Vec::with_capacity(blocks.len());
+        for block_info in blocks {
+            let series_id = series_id;
+            let start = start;
+            let end = end;
+            let path = block_info.path.clone();
+            
+            tasks.push(tokio::spawn(async move {
+                // 读取块数据
+                let reader = BlockReader::open(&path);
+                if let Ok(reader) = reader {
+                    // 从块中查询时间序列
+                    reader.query(series_id, start, end)
+                } else {
+                    Err(crate::error::Error::Internal(format!("Failed to open block reader for {:?}", path)))
+                }
+            }));
+        }
+        
+        // 收集所有任务的结果
+        let mut samples = Vec::new();
+        for task in tasks {
+            if let Ok(Ok(block_samples)) = task.await {
+                samples.extend(block_samples);
+            }
+        }
+        
+        // 更新访问模式
+        if !samples.is_empty() {
+            self.update_access_pattern(series_id).await;
+        }
+        
+        Ok(samples)
+    }
+
+    /// 更新访问模式
+    async fn update_access_pattern(&self, series_id: u64) {
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut stats = self.stats.write().await;
+        
+        let access_pattern = stats.access_patterns.entry(series_id).or_default();
+        access_pattern.access_count += 1;
+        
+        if access_pattern.last_access_time > 0 {
+            let time_diff_hours = (now - access_pattern.last_access_time) as f64 / (3600.0 * 1000.0);
+            if time_diff_hours > 0.0 {
+                access_pattern.access_frequency = access_pattern.access_count as f64 / time_diff_hours;
+            }
+        }
+        
+        access_pattern.last_access_time = now;
+        stats.last_update = now;
+    }
+
+    /// 删除时间序列
+    pub async fn delete(&self, series_id: u64) -> Result<()> {
+        debug!("Deleting series {} from tier {}", series_id, self.config.name);
+        
+        // 简化实现，只更新统计
+        let mut stats = self.stats.write().await;
+        stats.series_count = stats.series_count.saturating_sub(1);
+        stats.last_update = chrono::Utc::now().timestamp_millis();
+        
+        Ok(())
+    }
+
+    /// 清理过期数据
+    pub async fn cleanup(&self) -> Result<()> {
+        debug!("Cleaning up expired data in tier {}", self.config.name);
+        
+        let now = chrono::Utc::now().timestamp_millis();
+        let retention_ms = self.config.retention_hours as i64 * 3600 * 1000;
+        let cutoff_time = now - retention_ms;
+        
+        let mut block_manager = self.block_manager.write().await;
+        let all_blocks = block_manager.all_blocks();
+        
+        // 找出过期的块
+        let expired_block_ids: Vec<u64> = all_blocks
+            .values()
+            .filter(|block| block.max_timestamp < cutoff_time)
+            .map(|block| block.block_id)
+            .collect();
+        
+        for block_id in expired_block_ids {
+            // 从块管理器中移除
+            block_manager.remove_block(block_id)?;
+        }
+        
+        // 更新统计
+        let mut stats = self.stats.write().await;
+        stats.last_update = chrono::Utc::now().timestamp_millis();
+        
+        Ok(())
     }
 
     /// 检查数据是否在保留期内
@@ -145,6 +286,18 @@ impl DataTier {
         stats.total_bytes += data.len() as u64;
         stats.file_count += 1;
         Ok(())
+    }
+
+    /// 获取访问模式
+    pub async fn get_access_pattern(&self, series_id: u64) -> Option<AccessPattern> {
+        let stats = self.stats.read().await;
+        stats.access_patterns.get(&series_id).cloned()
+    }
+
+    /// 获取所有访问模式
+    pub async fn get_all_access_patterns(&self) -> std::collections::HashMap<u64, AccessPattern> {
+        let stats = self.stats.read().await;
+        stats.access_patterns.clone()
     }
 }
 

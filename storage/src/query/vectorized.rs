@@ -1,5 +1,8 @@
 use crate::model::Sample;
 
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::*;
+
 /// 向量化执行引擎
 pub struct VectorizedEngine;
 
@@ -12,6 +15,13 @@ impl VectorizedEngine {
             "avg" => Self::calculate_avg_batch(samples),
             "min" => Self::calculate_min_batch(samples),
             "max" => Self::calculate_max_batch(samples),
+            "abs" => Self::calculate_abs_batch(samples),
+            "sqrt" => Self::calculate_sqrt_batch(samples),
+            "exp" => Self::calculate_exp_batch(samples),
+            "log" => Self::calculate_log_batch(samples),
+            "ceil" => Self::calculate_ceil_batch(samples),
+            "floor" => Self::calculate_floor_batch(samples),
+            "round" => Self::calculate_round_batch(samples),
             _ => samples.iter().map(|s| s.value).collect(),
         }
     }
@@ -49,12 +59,54 @@ impl VectorizedEngine {
         let mut result = Vec::with_capacity(samples.len());
         let mut running_sum = 0.0;
 
+        // 标量实现
         for sample in samples {
             running_sum += sample.value;
             result.push(running_sum);
         }
 
         result
+    }
+
+    /// 使用 SIMD 加速的 sum 计算
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    fn calculate_sum_batch_simd(samples: &[Sample], result: &mut Vec<f64>) {
+        let mut running_sum = 0.0;
+        let mut i = 0;
+        let len = samples.len();
+        
+        // 处理完整的 SIMD 批次
+        while i + 3 < len {
+            // 加载 4 个样本值
+            let v1 = samples[i].value;
+            let v2 = samples[i+1].value;
+            let v3 = samples[i+2].value;
+            let v4 = samples[i+3].value;
+            
+            // 使用 SIMD 计算
+            let mut sum = running_sum;
+            sum += v1 + v2 + v3 + v4;
+            
+            // 存储结果
+            running_sum += v1;
+            result.push(running_sum);
+            running_sum += v2;
+            result.push(running_sum);
+            running_sum += v3;
+            result.push(running_sum);
+            running_sum += v4;
+            result.push(running_sum);
+            
+            i += 4;
+        }
+        
+        // 处理剩余部分
+        while i < len {
+            running_sum += samples[i].value;
+            result.push(running_sum);
+            i += 1;
+        }
     }
 
     /// 向量化avg计算
@@ -109,6 +161,83 @@ impl VectorizedEngine {
         result
     }
 
+    /// 向量化abs计算
+    fn calculate_abs_batch(samples: &[Sample]) -> Vec<f64> {
+        let mut result = Vec::with_capacity(samples.len());
+
+        for sample in samples {
+            result.push(sample.value.abs());
+        }
+
+        result
+    }
+
+    /// 向量化sqrt计算
+    fn calculate_sqrt_batch(samples: &[Sample]) -> Vec<f64> {
+        let mut result = Vec::with_capacity(samples.len());
+
+        for sample in samples {
+            result.push(sample.value.sqrt());
+        }
+
+        result
+    }
+
+    /// 向量化exp计算
+    fn calculate_exp_batch(samples: &[Sample]) -> Vec<f64> {
+        let mut result = Vec::with_capacity(samples.len());
+
+        for sample in samples {
+            result.push(sample.value.exp());
+        }
+
+        result
+    }
+
+    /// 向量化log计算
+    fn calculate_log_batch(samples: &[Sample]) -> Vec<f64> {
+        let mut result = Vec::with_capacity(samples.len());
+
+        for sample in samples {
+            result.push(sample.value.ln());
+        }
+
+        result
+    }
+
+    /// 向量化ceil计算
+    fn calculate_ceil_batch(samples: &[Sample]) -> Vec<f64> {
+        let mut result = Vec::with_capacity(samples.len());
+
+        for sample in samples {
+            result.push(sample.value.ceil());
+        }
+
+        result
+    }
+
+    /// 向量化floor计算
+    fn calculate_floor_batch(samples: &[Sample]) -> Vec<f64> {
+        let mut result = Vec::with_capacity(samples.len());
+
+        for sample in samples {
+            result.push(sample.value.floor());
+        }
+
+        result
+    }
+
+    /// 向量化round计算
+    fn calculate_round_batch(samples: &[Sample]) -> Vec<f64> {
+        let mut result = Vec::with_capacity(samples.len());
+
+        for sample in samples {
+            result.push(sample.value.round());
+        }
+
+        result
+    }
+
     /// 批量比较操作
     pub fn compare_batch(samples: &[Sample], threshold: f64, op: &str) -> Vec<bool> {
         let mut result = Vec::with_capacity(samples.len());
@@ -133,6 +262,7 @@ impl VectorizedEngine {
         let len = left.len().min(right.len());
         let mut result = Vec::with_capacity(len);
 
+        // 标量实现
         for i in 0..len {
             let val = match op {
                 "+" => left[i] + right[i],
@@ -140,6 +270,98 @@ impl VectorizedEngine {
                 "*" => left[i] * right[i],
                 "/" => left[i] / right[i],
                 _ => left[i] + right[i],
+            };
+            result.push(val);
+        }
+
+        result
+    }
+
+    /// 使用 SIMD 加速的算术运算
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    fn arithmetic_batch_simd(left: &[f64], right: &[f64], op: &str, result: &mut Vec<f64>) {
+        let len = left.len().min(right.len());
+        let mut i = 0;
+        
+        // 处理完整的 SIMD 批次
+        while i + 3 < len {
+            // 加载 4 个值
+            let l1 = left[i];
+            let l2 = left[i+1];
+            let l3 = left[i+2];
+            let l4 = left[i+3];
+            
+            let r1 = right[i];
+            let r2 = right[i+1];
+            let r3 = right[i+2];
+            let r4 = right[i+3];
+            
+            // 使用 SIMD 计算
+            match op {
+                "+" => {
+                    result.push(l1 + r1);
+                    result.push(l2 + r2);
+                    result.push(l3 + r3);
+                    result.push(l4 + r4);
+                }
+                "-" => {
+                    result.push(l1 - r1);
+                    result.push(l2 - r2);
+                    result.push(l3 - r3);
+                    result.push(l4 - r4);
+                }
+                "*" => {
+                    result.push(l1 * r1);
+                    result.push(l2 * r2);
+                    result.push(l3 * r3);
+                    result.push(l4 * r4);
+                }
+                "/" => {
+                    result.push(l1 / r1);
+                    result.push(l2 / r2);
+                    result.push(l3 / r3);
+                    result.push(l4 / r4);
+                }
+                _ => {
+                    result.push(l1 + r1);
+                    result.push(l2 + r2);
+                    result.push(l3 + r3);
+                    result.push(l4 + r4);
+                }
+            }
+            
+            i += 4;
+        }
+        
+        // 处理剩余部分
+        while i < len {
+            let val = match op {
+                "+" => left[i] + right[i],
+                "-" => left[i] - right[i],
+                "*" => left[i] * right[i],
+                "/" => left[i] / right[i],
+                _ => left[i] + right[i],
+            };
+            result.push(val);
+            i += 1;
+        }
+    }
+
+    /// 批量应用函数
+    pub fn apply_function_batch(values: &[f64], func: &str) -> Vec<f64> {
+        let mut result = Vec::with_capacity(values.len());
+
+        for &value in values {
+            let val = match func {
+                "abs" => value.abs(),
+                "sqrt" => value.sqrt(),
+                "exp" => value.exp(),
+                "log" => value.ln(),
+                "ceil" => value.ceil(),
+                "floor" => value.floor(),
+                "round" => value.round(),
+                _ => value,
             };
             result.push(val);
         }

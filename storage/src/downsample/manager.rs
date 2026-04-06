@@ -382,10 +382,9 @@ impl DownsampleManager {
     }
 
     /// 获取所有系列ID
-    async fn get_all_series_ids(_store: &Arc<MemStore>) -> Vec<TimeSeriesId> {
-        // 这里应该实现获取所有系列ID的逻辑
-        // 目前返回空列表，实际实现需要根据存储引擎获取
-        vec![]
+    async fn get_all_series_ids(store: &Arc<MemStore>) -> Vec<TimeSeriesId> {
+        // 从存储中获取所有系列ID
+        store.get_all_series_ids()
     }
 
     /// 清理已完成的任务

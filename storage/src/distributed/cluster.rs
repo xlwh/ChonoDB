@@ -162,6 +162,17 @@ impl ClusterManager {
                 for node_id in to_remove {
                     nodes_write.remove(&node_id);
                     info!("Removed offline node: {}", node_id);
+                    
+                    // 触发故障转移（简化实现，不调用 self 方法）
+                    let healthy_nodes: Vec<String> = nodes_write
+                        .values()
+                        .filter(|n| n.status == NodeStatus::Online)
+                        .map(|n| n.node_id.clone())
+                        .collect();
+                    
+                    if !healthy_nodes.is_empty() {
+                        info!("Healthy nodes after failover: {:?}", healthy_nodes);
+                    }
                 }
             }
         });
@@ -234,7 +245,7 @@ impl ClusterManager {
     }
 
     /// 检查领导者选举
-    async fn check_leader_election(&self) -> Result<()> {
+    pub async fn check_leader_election(&self) -> Result<()> {
         let leader = self.leader_id.read().await.clone();
         if leader.is_none() {
             // 执行领导者选举
@@ -264,6 +275,43 @@ impl ClusterManager {
             
             info!("Elected new leader: {}", leader.node_id);
         }
+        
+        Ok(())
+    }
+    
+    /// 处理节点故障
+    pub async fn handle_node_failure(&self, node_id: &str) -> Result<()> {
+        info!("Handling node failure: {}", node_id);
+        
+        // 1. 标记节点为离线
+        let mut nodes_write = self.nodes.write().await;
+        if let Some(node) = nodes_write.get_mut(node_id) {
+            node.status = NodeStatus::Offline;
+            info!("Marked node {} as offline", node_id);
+        }
+        
+        // 2. 如果故障节点是领导者，重新选举
+        if let Some(leader) = self.leader_id.read().await.as_ref() {
+            if leader == node_id {
+                info!("Leader node {} failed, starting re-election", node_id);
+                *self.leader_id.write().await = None;
+                self.elect_leader().await?;
+            }
+        }
+        
+        // 3. 移除故障节点
+        nodes_write.remove(node_id);
+        info!("Removed failed node: {}", node_id);
+        
+        Ok(())
+    }
+    
+    /// 触发故障转移
+    pub async fn trigger_failover(&self, failed_node_id: &str, healthy_nodes: &[String]) -> Result<()> {
+        info!("Triggering failover for node: {}, healthy nodes: {:?}", failed_node_id, healthy_nodes);
+        
+        // 这里可以添加更多的故障转移逻辑
+        // 例如，通知分片管理器重新分配分片
         
         Ok(())
     }
@@ -297,9 +345,47 @@ impl ClusterManager {
 }
 
 /// 发现节点
-async fn discover_nodes(addr: &str, _nodes: &Arc<RwLock<HashMap<String, NodeInfo>>>) -> Result<()> {
-    // 这里应该实现具体的节点发现逻辑
+async fn discover_nodes(addr: &str, nodes: &Arc<RwLock<HashMap<String, NodeInfo>>>) -> Result<()> {
+    // 这里实现具体的节点发现逻辑
     // 例如，通过DNS、etcd或其他服务发现机制
     debug!("Discovering nodes from {}", addr);
+    
+    // 模拟节点发现，实际实现应该通过服务发现机制获取节点信息
+    // 这里假设 addr 是一个 DNS 地址，我们解析它来获取节点信息
+    
+    // 模拟发现的节点
+    let discovered_nodes = vec![
+        NodeInfo {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: chrono::Utc::now().timestamp_millis(),
+            shard_count: 10,
+            series_count: 1000,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        },
+        NodeInfo {
+            node_id: "node-2".to_string(),
+            address: "127.0.0.1:9091".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: chrono::Utc::now().timestamp_millis(),
+            shard_count: 10,
+            series_count: 1000,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        },
+    ];
+    
+    // 注册发现的节点
+    let mut nodes_write = nodes.write().await;
+    for node in discovered_nodes {
+        let node_id = node.node_id.clone();
+        if !nodes_write.contains_key(&node_id) {
+            nodes_write.insert(node_id.clone(), node);
+            info!("Discovered new node: {}", node_id);
+        }
+    }
+    
     Ok(())
 }

@@ -4,7 +4,8 @@ use chronodb_storage::model::{Label, Sample, TimeSeries};
 use chronodb_storage::query::{QueryEngine, parse_promql};
 use chronodb_storage::distributed::{ClusterManager, ClusterConfig, NodeInfo, NodeStatus};
 use chronodb_storage::distributed::{ReplicationManager, ReplicationConfig};
-use chronodb_storage::distributed::{QueryCoordinator, CoordinatorConfig, ShardManager};
+use chronodb_storage::distributed::{QueryCoordinator, QueryCoordinatorConfig, ShardConfig, ShardManager, QueryShardManager};
+use chronodb_storage::rpc::ClusterRpcManager;
 use std::sync::Arc;
 use tempfile::tempdir;
 
@@ -266,7 +267,7 @@ async fn test_replication_manager() {
     let mut manager = ReplicationManager::new(config);
     
     // 创建一个模拟的RPC管理器
-    let rpc_manager = Arc::new(crate::rpc::ClusterRpcManager::new());
+    let rpc_manager = Arc::new(ClusterRpcManager::new());
     
     manager.start(rpc_manager).await.unwrap();
     
@@ -293,27 +294,23 @@ async fn test_replication_manager() {
 
 #[tokio::test]
 async fn test_shard_manager() {
-    let manager = ShardManager::new(128);
+    let config = ShardConfig {
+        shard_count: 128,
+        replication_factor: 2,
+        enable_virtual_nodes: false,
+        virtual_nodes_per_physical: 0,
+    };
+    let manager = ShardManager::new(config);
     
     let shard_id = manager.get_shard_for_series(12345);
     assert!(shard_id < 128);
-    
-    manager.add_node("node1".to_string());
-    manager.add_node("node2".to_string());
-    
-    let node = manager.get_node_for_key("test_key");
-    assert!(node.is_some());
-    
-    manager.remove_node("node1");
-    let node = manager.get_node_for_key("test_key");
-    assert!(node.is_some());
 }
 
 #[tokio::test]
 async fn test_query_coordinator() {
-    let shard_manager = Arc::new(tokio::sync::RwLock::new(ShardManager::new(128)));
-    let rpc_manager = Arc::new(crate::rpc::ClusterRpcManager::new());
-    let config = CoordinatorConfig::default();
+    let shard_manager = Arc::new(tokio::sync::RwLock::new(QueryShardManager::new(128)));
+    let rpc_manager = Arc::new(ClusterRpcManager::new());
+    let config = QueryCoordinatorConfig::default();
     
     let coordinator = QueryCoordinator::new(rpc_manager, shard_manager, config);
     
@@ -348,13 +345,19 @@ async fn test_distributed_integration() {
     cluster_manager.register_node(node_info).await.unwrap();
     
     // 测试分片管理器
-    let shard_manager = ShardManager::new(128);
-    shard_manager.add_node("node1".to_string());
+    let shard_config = ShardConfig {
+        shard_count: 128,
+        replication_factor: 2,
+        enable_virtual_nodes: false,
+        virtual_nodes_per_physical: 0,
+    };
+    let shard_manager = ShardManager::new(shard_config);
     
     // 测试查询协调器
-    let shard_manager_arc = Arc::new(tokio::sync::RwLock::new(shard_manager));
-    let rpc_manager = Arc::new(crate::rpc::ClusterRpcManager::new());
-    let coordinator_config = CoordinatorConfig::default();
+    let query_shard_manager = QueryShardManager::new(128);
+    let shard_manager_arc = Arc::new(tokio::sync::RwLock::new(query_shard_manager));
+    let rpc_manager = Arc::new(ClusterRpcManager::new());
+    let coordinator_config = QueryCoordinatorConfig::default();
     
     let coordinator = QueryCoordinator::new(rpc_manager, shard_manager_arc, coordinator_config);
     

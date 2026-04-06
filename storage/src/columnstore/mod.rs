@@ -15,7 +15,7 @@ pub use block_format::{
 };
 
 /// 降采样级别
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum DownsampleLevel {
     /// 原始数据 (10s) - L0
     L0 = 0,
