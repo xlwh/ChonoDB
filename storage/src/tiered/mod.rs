@@ -8,13 +8,8 @@ pub use manager::TieredStorageManager;
 pub use migration::{MigrationTask, MigrationManager};
 pub use auto_migration::{AutoMigrationManager, MigrationStats, MigrationStrategy};
 
-use crate::error::Result;
-use crate::model::{Sample, TimeSeries};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{info, error, warn, debug};
 
 /// 数据分层配置
 #[derive(Debug, Clone)]

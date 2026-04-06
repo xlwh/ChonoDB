@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use crate::state::ServerState;
 use crate::api::handlers::parse_label_matchers;
-use chronodb_storage::model::{Label, Sample, TimeSeries};
+use chronodb_storage::model::Label;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 记录规则

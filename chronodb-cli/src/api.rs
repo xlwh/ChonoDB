@@ -1,5 +1,5 @@
 use axum::{extract::{Query, Path, State}, http::StatusCode, response::IntoResponse, routing::{get, post}, Json, Router};
-use chronodb_storage::model::{Label, Sample, TimeSeries};
+use chronodb_storage::model::{Label, Sample};
 use chronodb_storage::query::{QueryEngine, QueryResult};
 use chronodb_storage::memstore::MemStore;
 use serde::{Deserialize, Serialize};

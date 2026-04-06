@@ -1,7 +1,7 @@
-use crate::columnstore::{Block, BlockMeta, Column, ColumnBuilder, ColumnType, BLOCK_MAGIC, BLOCK_VERSION};
-use crate::error::{Error, Result};
+use crate::columnstore::{Block, BlockMeta, ColumnBuilder, BLOCK_MAGIC, BLOCK_VERSION};
+use crate::error::Result;
 use crate::index::BloomFilter;
-use crate::model::{Label, Labels, Sample, TimeSeriesId};
+use crate::model::{Labels, Sample, TimeSeriesId};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};

@@ -1,4 +1,3 @@
-use crate::error::Result;
 use crate::model::Sample;
 
 /// 向量化执行引擎

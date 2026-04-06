@@ -1,8 +1,8 @@
 use crate::columnstore::DownsampleLevel;
 use crate::downsample::{
-    DownsampleConfig, DownsampleStats, LevelStats, TaskConfig, TaskResult,
+    DownsampleConfig, DownsampleStats, LevelStats, TaskResult,
 };
-use crate::downsample::task::{DownsampleTask, TaskBatch, TaskStatus};
+use crate::downsample::task::{DownsampleTask, TaskStatus};
 use crate::downsample::worker::{WorkerPool, WorkerTask};
 use crate::error::Result;
 use crate::memstore::MemStore;
@@ -382,7 +382,7 @@ impl DownsampleManager {
     }
 
     /// 获取所有系列ID
-    async fn get_all_series_ids(store: &Arc<MemStore>) -> Vec<TimeSeriesId> {
+    async fn get_all_series_ids(_store: &Arc<MemStore>) -> Vec<TimeSeriesId> {
         // 这里应该实现获取所有系列ID的逻辑
         // 目前返回空列表，实际实现需要根据存储引擎获取
         vec![]

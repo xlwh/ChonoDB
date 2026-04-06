@@ -7,13 +7,9 @@ pub use manager::DownsampleManager;
 pub use worker::DownsampleWorker;
 
 use crate::columnstore::DownsampleLevel;
-use crate::error::Result;
-use crate::model::{Sample, TimeSeries};
+use crate::model::Sample;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tokio::time::{interval, Duration};
-use tracing::{info, error, warn};
+use tokio::time::Duration;
 
 /// 降采样统计信息
 #[derive(Debug, Clone, Default)]

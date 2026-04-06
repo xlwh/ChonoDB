@@ -1,9 +1,9 @@
 use super::{AlertRule, RecordingRule, RuleManager, AlertManager};
 use crate::state::ServerState;
 use crate::api::handlers::parse_label_matchers;
-use chronodb_storage::model::{Label, Sample, TimeSeries};
+use chronodb_storage::model::Label;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 规则评估器
 pub struct RuleEvaluator {

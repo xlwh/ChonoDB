@@ -1,12 +1,12 @@
 use crate::error::{Error, Result};
 use crate::model::TimeSeries;
-use crate::rpc::{ClusterRpcManager, ReplicateRequest, ReplicateResponse};
-use std::collections::{HashMap, VecDeque};
+use crate::rpc::{ClusterRpcManager, ReplicateRequest};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{RwLock, Semaphore};
 use tokio::time::interval;
-use tracing::{info, debug, warn, error};
+use tracing::{info, debug, warn};
 
 /// 副本配置
 #[derive(Debug, Clone)]
@@ -168,7 +168,7 @@ impl ReplicationManager {
                             };
                             
                             // 构建复制请求
-                            let request = ReplicateRequest {
+                            let _request = ReplicateRequest {
                                 shard_id: task.shard_id,
                                 series: task.series.clone(),
                             };
@@ -202,9 +202,7 @@ impl ReplicationManager {
                             let mut metrics_write = metrics.write().await;
                             metrics_write.successful_replications += 1;
                             let latency = start_time.elapsed().unwrap().as_millis() as f64;
-                            metrics_write.replication_latency_ms = (
-                                metrics_write.replication_latency_ms * 0.9 + latency * 0.1
-                            );
+                            metrics_write.replication_latency_ms = metrics_write.replication_latency_ms * 0.9 + latency * 0.1 ;
                         },
                         Err(e) => {
                             let mut metrics_write = metrics.write().await;
@@ -292,7 +290,7 @@ impl ReplicationManager {
             .ok_or_else(|| Error::Internal(format!("No RPC client for node {}", node_id)))?;
         
         // 构建复制请求
-        let request = ReplicateRequest {
+        let _request = ReplicateRequest {
             shard_id: 0, // 暂时设为0，实际应该从任务中获取
             series: series.clone(),
         };

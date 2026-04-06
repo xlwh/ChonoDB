@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::model::{Sample, TimeSeries, TimeSeriesId};
+use crate::model::TimeSeries;
 use crate::query::planner::QueryPlanner;
 use crate::query::executor::QueryExecutor;
 use crate::memstore::MemStore;

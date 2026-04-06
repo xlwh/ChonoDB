@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
 pub mod alerting;
@@ -149,6 +148,7 @@ impl Default for RuleManager {
 mod tests {
     use super::*;
     use alerting::AlertCondition;
+    use std::collections::HashMap;
 
     #[test]
     fn test_rule_manager() {

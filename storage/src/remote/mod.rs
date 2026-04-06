@@ -6,10 +6,8 @@ pub use write::{RemoteWriter, WriteRequest, WriteResponse};
 pub use read::{RemoteReader, ReadRequest, ReadResponse};
 pub use codec::{SnappyCodec, ProtoCodec};
 
-use crate::error::Result;
 use crate::model::{Label, Sample, TimeSeries};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Remote write配置
 #[derive(Debug, Clone)]

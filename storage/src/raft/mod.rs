@@ -1,11 +1,11 @@
-use crate::error::{Error, Result};
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
-use tokio::time::{interval, sleep};
-use tracing::{debug, error, info, warn};
+use tokio::time::interval;
+use tracing::{debug, info};
 
 /// Raft节点ID
 type NodeId = String;
@@ -137,7 +137,7 @@ pub struct RaftNode {
 impl RaftNode {
     pub fn new(config: RaftConfig) -> (Self, mpsc::Receiver<RaftMessage>) {
         let (tx, rx) = mpsc::channel(1000);
-        let node_id = config.node_id.clone();
+        let _node_id = config.node_id.clone();
         let peers = config.peers.clone();
 
         let node = Self {

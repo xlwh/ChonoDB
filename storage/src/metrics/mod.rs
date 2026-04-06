@@ -5,10 +5,8 @@ use crate::memstore::MemStore;
 use crate::distributed::{ClusterManager, ReplicationManager};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tracing::{info, debug, warn};
 
 pub use exporter::{PrometheusExporter, ExporterConfig, MetricsEndpoint, QueryMetrics, WriteMetrics, StorageEngineMetrics};
 
@@ -477,9 +475,9 @@ mod tests {
         let registry = MetricsRegistry::new();
 
         let rule = AlertRule {
-            name: "TestAlert",
-            expr: "test_metric > 100",
-            for_duration: Duration::from_minutes(5),
+            name: "TestAlert".to_string(),
+            expr: "test_metric > 100".to_string(),
+            for_duration: Duration::from_mins(5),
             labels: HashMap::new(),
             annotations: HashMap::new(),
         };

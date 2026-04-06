@@ -7,8 +7,7 @@ use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{Builder, SharedCredentialsProvider};
 use bytes::Bytes;
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{info, debug, error};
+use tracing::{info, debug};
 
 /// S3 存储后端
 pub struct S3Storage {

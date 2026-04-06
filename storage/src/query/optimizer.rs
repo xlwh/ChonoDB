@@ -1,7 +1,5 @@
 use crate::error::Result;
 use crate::query::planner::{QueryPlan, PlanType, VectorQueryPlan, MatrixQueryPlan, CallPlan, BinaryExprPlan, UnaryExprPlan, AggregationPlan};
-use crate::query::parser::{Expr, ExprType, MatchOp, Matcher};
-use crate::model::Label;
 use tracing::{debug, info};
 
 /// 查询优化器

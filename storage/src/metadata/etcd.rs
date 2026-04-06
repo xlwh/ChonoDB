@@ -1,12 +1,11 @@
 use crate::error::{Error, Result};
-use crate::model::{Label, Labels, TimeSeriesId};
-use etcd_client::{Client, ConnectOptions, GetOptions, PutOptions, WatchOptions, WatchStream, EventType};
+use crate::model::{Labels, TimeSeriesId};
+use etcd_client::{Client, ConnectOptions, GetOptions, PutOptions, WatchOptions, WatchStream};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 /// etcd元数据存储配置
 #[derive(Debug, Clone)]

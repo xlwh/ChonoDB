@@ -1,5 +1,4 @@
 use crate::error::{Error, Result};
-use std::collections::HashMap;
 
 pub struct DeltaEncoder {
     last_value: Option<i64>,

@@ -1,4 +1,3 @@
-use chronodb_storage::model::{Sample, TimeSeries};
 use axum::{
     extract::{Query, State},
     response::Json,
@@ -211,7 +210,7 @@ pub async fn handle_series(
 /// 处理标签查询
 pub async fn handle_labels(
     State(state): State<Arc<ServerState>>,
-    Query(params): Query<HashMap<String, String>>,
+    Query(_params): Query<HashMap<String, String>>,
 ) -> Json<ApiResponse<Vec<String>>> {
     // 使用内存存储获取标签名
     let labels = state.memstore.label_names();
@@ -222,7 +221,7 @@ pub async fn handle_labels(
 pub async fn handle_label_values(
     State(state): State<Arc<ServerState>>,
     axum::extract::Path(name): axum::extract::Path<String>,
-    Query(params): Query<HashMap<String, String>>,
+    Query(_params): Query<HashMap<String, String>>,
 ) -> Json<ApiResponse<Vec<String>>> {
     // 使用内存存储获取标签值
     let values = state.memstore.label_values(&name);
@@ -290,7 +289,7 @@ pub async fn handle_rules(
 pub async fn handle_alerts(
     State(state): State<Arc<ServerState>>,
 ) -> Json<ApiResponse<HashMap<String, Vec<Alert>>>> {
-    let alert_manager = state.alert_manager.read().await;
+    let _alert_manager = state.alert_manager.read().await;
 
     let alerts: Vec<Alert> = vec![]; // TODO: 从 alert_manager 获取实际告警
 
@@ -312,7 +311,7 @@ pub async fn handle_ready() -> &'static str {
 
 /// 运行时信息
 pub async fn handle_runtime_info(
-    State(state): State<Arc<ServerState>>,
+    State(_state): State<Arc<ServerState>>,
 ) -> Json<ApiResponse<RuntimeInfo>> {
     let info = RuntimeInfo {
         start_time: "2024-01-01T00:00:00Z".to_string(),

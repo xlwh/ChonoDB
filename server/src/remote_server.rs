@@ -1,20 +1,18 @@
 use axum::{
     body::Bytes,
-    extract::{Query, State},
+    extract::State,
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
-use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::state::ServerState;
 use chronodb_storage::remote::{
     RemoteWriteRequest, RemoteReadRequest, RemoteReadResponse, RemoteQueryResult,
-    RemoteTimeSeries, RemoteLabel, RemoteSample, SnappyCodec, ProtoCodec,
+    RemoteTimeSeries, SnappyCodec, ProtoCodec,
 };
-use chronodb_storage::model::{Label, Sample, TimeSeries};
+use chronodb_storage::model::TimeSeries;
 
 /// Remote Write 处理
 pub async fn handle_remote_write(

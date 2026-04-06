@@ -1,12 +1,11 @@
 use chronodb_storage::memstore::MemStore;
 use chronodb_storage::config::StorageConfig;
-use chronodb_storage::model::{Label, Sample, TimeSeries};
+use chronodb_storage::model::{Label, Sample};
 use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH, Instant, Duration};
-use tracing::{info, error, warn};
+use tracing::{info, warn};
 use walkdir::WalkDir;
 
 /// 运维工具集合
@@ -415,7 +414,7 @@ impl MaintenanceTools {
         
         // 解析JSON（简化实现）
         let mut imported_series = 0;
-        let mut imported_samples = 0;
+        let imported_samples = 0;
         
         for line in reader.lines() {
             let line = line?;
@@ -617,8 +616,8 @@ fn parse_prometheus_block(
 fn parse_prometheus_chunk(
     chunk_path: &Path,
     store: &MemStore,
-    start_time: Option<i64>,
-    end_time: Option<i64>,
+    _start_time: Option<i64>,
+    _end_time: Option<i64>,
 ) -> anyhow::Result<(u64, u64)> {
     // 简化实现：模拟解析Prometheus chunks文件
     // 实际实现需要解析Prometheus的TSDB格式
@@ -649,8 +648,8 @@ fn parse_prometheus_chunk(
 fn parse_prometheus_wal(
     wal_path: &Path,
     store: &MemStore,
-    start_time: Option<i64>,
-    end_time: Option<i64>,
+    _start_time: Option<i64>,
+    _end_time: Option<i64>,
 ) -> anyhow::Result<(u64, u64)> {
     // 简化实现：模拟解析Prometheus WAL文件
     // 实际实现需要解析Prometheus的WAL格式
@@ -819,12 +818,12 @@ impl BenchmarkTool {
         
         while write_start.elapsed() < duration / 2 {
             // 模拟写入操作
-            let labels = vec![
+            let _labels = vec![
                 Label::new("__name__", "benchmark_metric"),
                 Label::new("worker", &format!("{}", write_count % workers as u64)),
             ];
             
-            let samples = vec![
+            let _samples = vec![
                 Sample::new(
                     SystemTime::now()
                         .duration_since(UNIX_EPOCH)?

@@ -1,8 +1,7 @@
 use crate::error::Result;
 use crate::model::TimeSeries;
-use crate::remote::{RemoteConfig, RemoteTimeSeries, RemoteWriteRequest, RemoteWriteResponse};
+use crate::remote::{RemoteConfig, RemoteTimeSeries, RemoteWriteRequest};
 use crate::remote::codec::CompressedProtoCodec;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::{interval, sleep};

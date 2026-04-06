@@ -1,10 +1,9 @@
 use crate::columnstore::DownsampleLevel;
 use crate::error::Result;
 use crate::model::{Sample, TimeSeries};
-use crate::query::planner::{QueryPlan, PlanType};
 use crate::memstore::MemStore;
 use std::sync::Arc;
-use tracing::{info, debug, trace};
+use tracing::{info, debug};
 
 /// 降采样路由决策
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

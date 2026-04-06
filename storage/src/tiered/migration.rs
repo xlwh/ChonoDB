@@ -1,8 +1,6 @@
 use crate::error::Result;
-use crate::tiered::tier::{DataTier, TierCollection};
-use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{info, error, debug};
+use tracing::{info, debug};
 
 #[derive(Debug, Clone)]
 pub struct MigrationTask {
@@ -17,8 +15,8 @@ pub struct MigrationManager {
 }
 
 impl MigrationManager {
-    pub fn new(concurrency: usize) -> (Self, MigrationHandle) {
-        let (task_tx, mut task_rx) = mpsc::channel(1000);
+    pub fn new(_concurrency: usize) -> (Self, MigrationHandle) {
+        let (task_tx, task_rx) = mpsc::channel(1000);
         
         let handle = MigrationHandle {
             task_rx,

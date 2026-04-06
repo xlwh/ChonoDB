@@ -1,8 +1,6 @@
 use crate::columnstore::DownsampleLevel;
-use crate::error::Result;
 use crate::model::TimeSeriesId;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::time::Instant;
 use tracing::{info, error, warn};
 
 /// 任务状态

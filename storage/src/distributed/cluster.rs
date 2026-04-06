@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::interval;
-use tracing::{info, debug, warn, error};
+use tracing::{info, debug, warn};
 
 /// 集群配置
 #[derive(Debug, Clone)]
@@ -297,7 +297,7 @@ impl ClusterManager {
 }
 
 /// 发现节点
-async fn discover_nodes(addr: &str, nodes: &Arc<RwLock<HashMap<String, NodeInfo>>>) -> Result<()> {
+async fn discover_nodes(addr: &str, _nodes: &Arc<RwLock<HashMap<String, NodeInfo>>>) -> Result<()> {
     // 这里应该实现具体的节点发现逻辑
     // 例如，通过DNS、etcd或其他服务发现机制
     debug!("Discovering nodes from {}", addr);

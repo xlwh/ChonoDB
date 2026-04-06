@@ -1,11 +1,7 @@
 use crate::error::Result;
 use crate::model::{Sample, TimeSeries, TimeSeriesId};
-use crate::query::planner::{PlanType, VectorQueryPlan};
-use crate::memstore::MemStore;
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::{info, error, debug};
 
 /// 并行查询执行器
 pub struct ParallelQueryExecutor {

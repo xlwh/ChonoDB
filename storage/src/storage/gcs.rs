@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use crate::storage::{StorageBackend, StorageConfig, StorageObject, ListOptions, ObjectMetadata, StorageOptions};
+use crate::storage::{StorageBackend, ObjectMetadata};
 use async_trait::async_trait;
 use bytes::Bytes;
 use google_cloud_storage::client::{Client, ClientConfig};
@@ -10,7 +10,7 @@ use google_cloud_storage::http::objects::delete::DeleteObjectRequest;
 use google_cloud_storage::http::objects::list::ListObjectsRequest;
 use std::collections::HashMap;
 use std::path::Path;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 /// GCS对象存储配置
 #[derive(Debug, Clone)]

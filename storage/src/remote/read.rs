@@ -1,9 +1,9 @@
 use crate::error::Result;
 use crate::model::TimeSeries;
-use crate::remote::{RemoteConfig, RemoteReadRequest, RemoteReadResponse, RemoteQueryResult, RemoteTimeSeries};
+use crate::remote::{RemoteConfig, RemoteReadRequest, RemoteReadResponse, RemoteQueryResult};
 use crate::remote::codec::CompressedProtoCodec;
 use std::time::Duration;
-use tracing::{info, error, warn, debug};
+use tracing::{warn, debug};
 
 /// Remote read请求
 #[derive(Debug, Clone)]

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chronodb_storage::model::Labels;
 
@@ -112,7 +112,7 @@ impl AlertManager {
     }
     
     /// 创建或更新告警
-    pub fn create_alert(&mut self, name: String, labels: Labels, value: f64, timestamp: i64, annotations: HashMap<String, String>) {
+    pub fn create_alert(&mut self, name: String, labels: Labels, value: f64, _timestamp: i64, annotations: HashMap<String, String>) {
         let now = SystemTime::now();
         let labels_map: HashMap<String, String> = labels.into_iter().map(|label| (label.name, label.value)).collect();
         
@@ -121,7 +121,7 @@ impl AlertManager {
             a.name == name && a.labels == labels_map
         }) {
             // 更新现有告警
-            let old_state = existing_alert.state.clone();
+            let _old_state = existing_alert.state.clone();
             existing_alert.value = value;
             existing_alert.last_evaluation = Some(now);
             existing_alert.annotations = annotations;

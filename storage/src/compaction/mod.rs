@@ -1,7 +1,7 @@
-use crate::columnstore::{Block, BlockMeta, BlockWriter, Column, ColumnBuilder, ColumnType};
+use crate::columnstore::BlockWriter;
 use crate::error::{Error, Result};
 use crate::flush::BlockManager;
-use crate::model::{Label, Labels, Sample, TimeSeriesId};
+use crate::model::{Labels, Sample, TimeSeriesId};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -253,7 +253,7 @@ impl CompactionManager {
     async fn load_block_data(
         &self,
         block_id: u64,
-        all_series: &mut HashMap<TimeSeriesId, (Labels, Vec<Sample>)>,
+        _all_series: &mut HashMap<TimeSeriesId, (Labels, Vec<Sample>)>,
     ) -> Result<()> {
         // In a real implementation, this would load the block from disk
         // and extract all series data

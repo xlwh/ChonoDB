@@ -1,11 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::time::Interval;
-use tokio::sync::RwLock;
+use std::time::SystemTime;
 use crate::state::ServerState;
-use chronodb_storage::model::{Label, Sample};
 
 pub mod scraper;
 
@@ -110,7 +107,7 @@ impl TargetManager {
     }
     
     /// 开始抓取任务
-    fn start_scraping_task(&mut self, target: &Target, state: Arc<ServerState>) {
+    fn start_scraping_task(&mut self, target: &Target, _state: Arc<ServerState>) {
         // 简化实现，暂时不使用 tokio::spawn
         // 实际项目中应该使用更复杂的实现，确保线程安全
         let target_id = target.id.clone();

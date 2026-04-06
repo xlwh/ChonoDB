@@ -105,7 +105,7 @@ impl WalEntry {
             return Err(Error::Wal("Invalid WAL magic number".to_string()));
         }
         
-        let entry_type = WalEntryType::try_from(data[4])?;
+        let _entry_type = WalEntryType::try_from(data[4])?;
         let data_len = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
         let expected_crc = u32::from_le_bytes([data[12], data[13], data[14], data[15]]);
         

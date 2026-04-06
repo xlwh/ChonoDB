@@ -1,10 +1,9 @@
-use crate::columnstore::{Block, BlockMeta, Column, ColumnType};
+use crate::columnstore::{BlockMeta, Column, ColumnType};
 use crate::error::{Error, Result};
 use crate::index::BloomFilter;
-use crate::model::{Label, Labels, Sample, TimeSeriesId};
+use crate::model::{Labels, Sample, TimeSeriesId};
 use memmap2::Mmap;
 use std::collections::HashMap;
-use std::fs::File;
 use std::path::{Path, PathBuf};
 
 pub struct BlockReader {

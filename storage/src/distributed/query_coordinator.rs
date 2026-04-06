@@ -1,12 +1,11 @@
 use crate::error::{Error, Result};
 use crate::model::{TimeSeries, TimeSeriesId};
 use crate::query::{QueryPlan, QueryResult};
-use crate::rpc::{ClusterRpcManager, QueryRequest, QueryResponse, RpcClient};
-use std::collections::{HashMap, HashSet, VecDeque};
+use crate::rpc::ClusterRpcManager;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 use tokio::sync::{RwLock, Semaphore};
-use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
 /// 分布式查询协调器
@@ -259,7 +258,7 @@ impl QueryCoordinator {
         let mut stats = self.stats.write().await;
         stats.total_queries += 1;
         stats.successful_queries += 1;
-        stats.avg_query_time_ms = (stats.avg_query_time_ms * 0.9 + duration.as_millis() as f64 * 0.1);
+        stats.avg_query_time_ms = stats.avg_query_time_ms * 0.9 + duration.as_millis() as f64 * 0.1 ;
         stats.total_series_queried += merged_result.series.len() as u64;
         stats.total_samples_queried += merged_result.series.iter().map(|s| s.samples.len() as u64).sum::<u64>();
 
@@ -279,7 +278,7 @@ impl QueryCoordinator {
     }
 
     /// 从查询计划中提取系列ID
-    async fn extract_series_ids(&self, plan: &QueryPlan) -> Result<Vec<TimeSeriesId>> {
+    async fn extract_series_ids(&self, _plan: &QueryPlan) -> Result<Vec<TimeSeriesId>> {
         // 简化实现：根据查询计划中的匹配器获取系列ID
         // 实际实现需要查询元数据服务
         debug!("Extracting series IDs from query plan");
@@ -446,7 +445,7 @@ impl QueryCoordinator {
 
         // 对每个组执行聚合
         let mut result = Vec::new();
-        for (group_key, group_series) in groups {
+        for (_group_key, group_series) in groups {
             let aggregated = self.aggregate_group(group_series, aggregation_type)?;
             result.push(aggregated);
         }
@@ -460,10 +459,10 @@ impl QueryCoordinator {
         series: Vec<TimeSeries>,
         aggregation_type: AggregationType,
     ) -> Result<TimeSeries> {
-        use crate::model::{Label, Sample};
+        use crate::model::Sample;
 
         // 合并所有样本
-        let mut all_samples: Vec<Sample> = series
+        let all_samples: Vec<Sample> = series
             .iter()
             .flat_map(|ts| ts.samples.clone())
             .collect();
