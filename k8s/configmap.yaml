@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chronodb-config
+  namespace: chronodb
+data:
+  chronodb.yaml: |
+    listen_address: "0.0.0.0"
+    port: 9090
+    data_dir: "/var/lib/chronodb"
+    
+    storage:
+      mode: standalone
+      backend: local
+      local_path: "/var/lib/chronodb/data"
+      max_disk_usage: "80%"
+    
+    query:
+      max_concurrent: 100
+      timeout: 120
+      max_samples: 50000000
+      enable_vectorized: true
+      enable_parallel: true
+      enable_auto_downsampling: true
+    
+    rules:
+      rule_files: []
+      evaluation_interval: 60
+      alert_send_interval: 60
+    
+    targets:
+      config_file: null
+      scrape_interval: 60
+      scrape_timeout: 10
+    
+    log:
+      level: info
+      format: json
+      output: "/var/log/chronodb/chronodb.log"

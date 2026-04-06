@@ -1,0 +1,177 @@
+# ChronoDB 对象存储配置示例
+
+# ============================================
+# 本地存储配置
+# ============================================
+local_storage:
+  backend: "local"
+  bucket: "chronodb-data"
+  region: "local"
+  local_path: "/var/lib/chronodb/storage"
+
+# ============================================
+# AWS S3 配置
+# ============================================
+s3_storage:
+  backend: "s3"
+  bucket: "chronodb-timeseries"
+  region: "us-east-1"
+  # 凭证可以通过以下方式提供：
+  # 1. 环境变量: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+  # 2. IAM 角色（在 AWS 环境中）
+  # 3. 配置文件: ~/.aws/credentials
+  # 4. 直接在配置中指定（不推荐生产环境）
+  # access_key: "your-access-key"
+  # secret_key: "your-secret-key"
+
+# ============================================
+# MinIO 配置（S3 兼容）
+# ============================================
+minio_storage:
+  backend: "minio"
+  bucket: "chronodb"
+  region: "us-east-1"
+  endpoint: "http://localhost:9000"
+  access_key: "minioadmin"
+  secret_key: "minioadmin"
+  # MinIO 使用 path-style 访问
+  force_path_style: true
+
+# ============================================
+# Google Cloud Storage 配置
+# ============================================
+gcs_storage:
+  backend: "gcs"
+  bucket: "chronodb-timeseries"
+  region: "us-central1"
+  # 凭证可以通过以下方式提供：
+  # 1. 环境变量: GOOGLE_APPLICATION_CREDENTIALS
+  # 2. gcloud CLI 认证
+  # 3. 服务账号密钥文件
+  # credentials_path: "/path/to/service-account-key.json"
+  # project_id: "your-gcp-project-id"
+
+# ============================================
+# Azure Blob Storage 配置（计划中）
+# ============================================
+azure_storage:
+  backend: "azure"
+  bucket: "chronodb-container"
+  region: "westus2"
+  # Azure 特定配置
+  # account_name: "your-storage-account"
+  # account_key: "your-account-key"
+
+# ============================================
+# 分层存储配置
+# ============================================
+tiered_storage:
+  # 热数据层 - 本地 SSD
+  hot:
+    backend: "local"
+    bucket: "chronodb-hot"
+    local_path: "/ssd/chronodb/hot"
+    retention_days: 7
+  
+  # 温数据层 - 本地 HDD
+  warm:
+    backend: "local"
+    bucket: "chronodb-warm"
+    local_path: "/hdd/chronodb/warm"
+    retention_days: 30
+  
+  # 冷数据层 - 对象存储
+  cold:
+    backend: "s3"
+    bucket: "chronodb-cold"
+    region: "us-east-1"
+    retention_days: 90
+  
+  # 归档层 - 廉价对象存储
+  archive:
+    backend: "s3"
+    bucket: "chronodb-archive"
+    region: "us-east-1"
+    storage_class: "GLACIER"
+    retention_days: 365
+
+# ============================================
+# 分布式存储配置
+# ============================================
+distributed_storage:
+  # 分片配置
+  sharding:
+    enabled: true
+    shard_count: 16
+    virtual_nodes_per_shard: 100
+    replication_factor: 3
+  
+  # 节点配置
+  nodes:
+    - id: "node-1"
+      address: "10.0.1.1:8080"
+      rack: "rack-a"
+      zone: "zone-1"
+    - id: "node-2"
+      address: "10.0.1.2:8080"
+      rack: "rack-a"
+      zone: "zone-1"
+    - id: "node-3"
+      address: "10.0.1.3:8080"
+      rack: "rack-b"
+      zone: "zone-1"
+    - id: "node-4"
+      address: "10.0.1.4:8080"
+      rack: "rack-b"
+      zone: "zone-2"
+  
+  # 后端存储类型
+  backend:
+    type: "s3"
+    bucket: "chronodb-distributed"
+    region: "us-east-1"
+
+# ============================================
+# 数据生命周期配置
+# ============================================
+data_lifecycle:
+  # 自动降级策略
+  auto_tiering:
+    enabled: true
+    check_interval_hours: 1
+    
+    rules:
+      - name: "hot_to_warm"
+        source_tier: "hot"
+        target_tier: "warm"
+        age_days: 7
+        
+      - name: "warm_to_cold"
+        source_tier: "warm"
+        target_tier: "cold"
+        age_days: 30
+        
+      - name: "cold_to_archive"
+        source_tier: "cold"
+        target_tier: "archive"
+        age_days: 90
+  
+  # 压缩策略
+  compression:
+    hot_tier: "zstd"
+    warm_tier: "zstd"
+    cold_tier: "zstd"
+    archive_tier: "zstd"
+  
+  # 降采样策略
+  downsampling:
+    enabled: true
+    resolutions:
+      - interval: "1m"
+        retention: "7d"
+      - interval: "5m"
+        retention: "30d"
+      - interval: "1h"
+        retention: "1y"
+      - interval: "1d"
+        retention: "5y"

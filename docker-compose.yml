@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  chronodb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chronodb
+    ports:
+      - "9090:9090"
+    volumes:
+      - chronodb-data:/var/lib/chronodb
+      - chronodb-logs:/var/log/chronodb
+      - ./config/chronodb.yaml:/etc/chronodb/chronodb.yaml:ro
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - chronodb-network
+
+  # MinIO 对象存储（可选）
+  minio:
+    image: minio/minio:latest
+    container_name: chronodb-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    networks:
+      - chronodb-network
+    profiles:
+      - with-minio
+
+  # Grafana（可选，用于可视化）
+  grafana:
+    image: grafana/grafana:latest
+    container_name: chronodb-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+    restart: unless-stopped
+    networks:
+      - chronodb-network
+    profiles:
+      - with-grafana
+
+volumes:
+  chronodb-data:
+    driver: local
+  chronodb-logs:
+    driver: local
+  minio-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+networks:
+  chronodb-network:
+    driver: bridge
