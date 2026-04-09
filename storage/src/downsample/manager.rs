@@ -18,6 +18,7 @@ use tracing::{info, error, warn, debug};
 pub struct DownsampleManager {
     config: DownsampleConfig,
     store: Arc<MemStore>,
+    data_dir: std::path::PathBuf,
     tasks: Arc<RwLock<HashMap<String, DownsampleTask>>>,
     stats: Arc<RwLock<DownsampleStats>>,
     worker_pool: Arc<RwLock<Option<WorkerPool>>>,
@@ -26,10 +27,11 @@ pub struct DownsampleManager {
 }
 
 impl DownsampleManager {
-    pub fn new(config: DownsampleConfig, store: Arc<MemStore>) -> Self {
+    pub fn new(config: DownsampleConfig, store: Arc<MemStore>, data_dir: std::path::PathBuf) -> Self {
         Self {
             config,
             store,
+            data_dir,
             tasks: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(RwLock::new(DownsampleStats::default())),
             worker_pool: Arc::new(RwLock::new(None)),
@@ -60,6 +62,7 @@ impl DownsampleManager {
         let worker_pool = WorkerPool::new(
             self.config.concurrency,
             self.store.clone(),
+            self.data_dir.clone(),
             100,
         );
 
@@ -418,8 +421,9 @@ mod tests {
 
     fn create_test_manager() -> (DownsampleManager, Arc<MemStore>) {
         let temp_dir = tempdir().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
         let config = StorageConfig {
-            data_dir: temp_dir.path().to_string_lossy().to_string(),
+            data_dir: data_dir.to_string_lossy().to_string(),
             ..Default::default()
         };
         let store = Arc::new(MemStore::new(config).unwrap());
@@ -438,7 +442,7 @@ mod tests {
             ],
         };
 
-        let manager = DownsampleManager::new(ds_config, store.clone());
+        let manager = DownsampleManager::new(ds_config, store.clone(), data_dir);
         (manager, store)
     }
 

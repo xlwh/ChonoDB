@@ -107,4 +107,16 @@ impl DownsampleLevel {
             DownsampleLevel::L4 => 3650,
         }
     }
+
+    /// 从分辨率毫秒值获取对应的DownsampleLevel
+    pub fn from_resolution_ms(resolution_ms: i64) -> Option<Self> {
+        match resolution_ms {
+            10_000 => Some(DownsampleLevel::L0),
+            60_000 => Some(DownsampleLevel::L1),
+            300_000 => Some(DownsampleLevel::L2),
+            3_600_000 => Some(DownsampleLevel::L3),
+            86_400_000 => Some(DownsampleLevel::L4),
+            _ => None,
+        }
+    }
 }

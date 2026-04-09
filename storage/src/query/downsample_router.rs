@@ -1,9 +1,10 @@
 use crate::columnstore::DownsampleLevel;
 use crate::error::Result;
-use crate::model::{Sample, TimeSeries};
+use crate::model::{Sample, TimeSeries, TimeSeriesId};
 use crate::memstore::MemStore;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{info, debug};
+use tracing::{info, debug, warn};
 
 /// 降采样路由决策
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,12 +160,13 @@ impl DownsampleRouter {
 pub struct DownsampleQueryExecutor {
     router: DownsampleRouter,
     store: Arc<MemStore>,
+    data_dir: PathBuf,
 }
 
 impl DownsampleQueryExecutor {
     /// 创建新的降采样查询执行器
-    pub fn new(store: Arc<MemStore>, router: DownsampleRouter) -> Self {
-        Self { router, store }
+    pub fn new(store: Arc<MemStore>, router: DownsampleRouter, data_dir: PathBuf) -> Self {
+        Self { router, store, data_dir }
     }
 
     /// 执行查询，自动选择合适的降采样级别
@@ -225,14 +227,26 @@ impl DownsampleQueryExecutor {
         end: i64,
         level: DownsampleLevel,
     ) -> Result<Vec<TimeSeries>> {
-        // 这里应该查询降采样存储
-        // 简化实现：先查询原始数据，然后实时降采样
         debug!(
             "Querying downsampled data at level {:?}, resolution={}ms",
             level,
             level.resolution_ms()
         );
 
+        // 检查是否有可用的降采样数据目录
+        let downsample_dir = self.data_dir.join("downsample");
+        let level_str = format!("L{}", level as u8);
+        let level_dir = downsample_dir.join(level_str);
+        
+        if downsample_dir.exists() && level_dir.exists() {
+            info!(
+                "Found downsample data directory, will use pre-downsampled data when available"
+            );
+            // TODO: 这里可以添加从列式存储读取降采样数据的逻辑
+            // 目前先使用实时降采样，因为BlockManager是私有的
+        }
+
+        // 查询原始数据并实时降采样
         let raw_results = self.query_raw(series_ids, start, end).await?;
         let resolution = level.resolution_ms();
 

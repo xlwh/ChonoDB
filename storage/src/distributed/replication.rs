@@ -246,69 +246,7 @@ impl ReplicationManager {
         });
     }
 
-    /// 执行复制
-    async fn execute_replication(
-        &self,
-        rpc_manager: &Arc<ClusterRpcManager>,
-        task: &ReplicationTask,
-        config: &ReplicationConfig,
-    ) -> Result<()> {
-        let mut success_count = 0;
-        
-        for node in &task.target_nodes {
-            match self.replicate_to_node(rpc_manager, node, &task.series, config).await {
-                Ok(_) => success_count += 1,
-                Err(e) => warn!("Failed to replicate to {}: {}", node, e),
-            }
-        }
 
-        // 检查是否满足最小写入副本数
-        if success_count < config.min_write_replicas {
-            return Err(Error::Internal(
-                format!("Only {} replicas written, minimum required: {}", 
-                    success_count, config.min_write_replicas)
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// 复制到单个节点
-    async fn replicate_to_node(
-        &self,
-        rpc_manager: &Arc<ClusterRpcManager>,
-        node_id: &str,
-        series: &TimeSeries,
-        config: &ReplicationConfig,
-    ) -> Result<()> {
-        debug!("Replicating series {} to node {}", series.id, node_id);
-        
-        // 获取RPC客户端
-        let client = rpc_manager
-            .get_client(node_id)
-            .await
-            .ok_or_else(|| Error::Internal(format!("No RPC client for node {}", node_id)))?;
-        
-        // 构建复制请求
-        let _request = ReplicateRequest {
-            shard_id: 0, // 暂时设为0，实际应该从任务中获取
-            series: series.clone(),
-        };
-        
-        // 发送复制请求
-        let response = tokio::time::timeout(
-            Duration::from_millis(config.replication_timeout_ms),
-            client.replicate(0, series.clone())
-        ).await
-        .map_err(|_| Error::Internal("Replication timeout".to_string()))?
-        .map_err(|e| Error::Internal(format!("Replication failed: {}", e)))?;
-        
-        if !response.success {
-            return Err(Error::Internal(format!("Replication failed on node {}: {}", node_id, response.message)));
-        }
-        
-        Ok(())
-    }
 
     /// 复制数据到副本节点
     pub async fn replicate(&self, shard_id: u64, series: TimeSeries, target_nodes: &[String]) -> Result<()> {
@@ -342,14 +280,38 @@ impl ReplicationManager {
         } else {
             // 同步复制：立即执行
             if let Some(rpc_manager) = &*self.rpc_manager.read().await {
-                let task = ReplicationTask {
-                    shard_id,
-                    series: series.clone(),
-                    target_nodes: target_nodes.to_vec(),
-                    retry_count: 0,
-                    max_retries: 3,
-                };
-                self.execute_replication(rpc_manager, &task, &self.config).await?;
+                let mut success_count = 0;
+                
+                for node in target_nodes {
+                    // 获取RPC客户端
+                    let client = match rpc_manager.get_client(node).await {
+                        Some(client) => client,
+                        None => {
+                            warn!("No RPC client for node {} in sync replication", node);
+                            continue;
+                        }
+                    };
+                    
+                    // 发送复制请求
+                    let response = tokio::time::timeout(
+                        Duration::from_millis(self.config.replication_timeout_ms),
+                        client.replicate(shard_id, series.clone())
+                    ).await
+                    .map_err(|_| Error::Internal("Replication timeout".to_string()))?
+                    .map_err(|e| Error::Internal(format!("Replication failed: {}", e)))?;
+                    
+                    if response.success {
+                        success_count += 1;
+                    }
+                }
+                
+                // 检查是否满足最小写入副本数
+                if success_count < self.config.min_write_replicas {
+                    return Err(Error::Internal(
+                        format!("Only {} replicas written, minimum required: {}", 
+                            success_count, self.config.min_write_replicas)
+                    ));
+                }
             }
         }
 
@@ -392,7 +354,7 @@ impl ReplicationManager {
     }
 
     /// 停止复制管理器
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(&self) -> Result<()> {
         let mut workers = self.replication_workers.write().await;
         for worker in workers.drain(..) {
             worker.abort();

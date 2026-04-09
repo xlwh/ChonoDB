@@ -1,10 +1,12 @@
 pub mod task;
 pub mod manager;
 pub mod worker;
+pub mod scheduler;
 
 pub use task::{DownsampleTask, TaskConfig, TaskStatus, TaskResult, TaskBatch};
 pub use manager::DownsampleManager;
 pub use worker::DownsampleWorker;
+pub use scheduler::{DownsampleScheduler, TaskPriority};
 
 use crate::columnstore::DownsampleLevel;
 use crate::model::Sample;

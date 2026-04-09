@@ -71,20 +71,20 @@ fn bench_compression(c: &mut Criterion) {
     for size in [1000, 10000, 100000].iter() {
         group.bench_with_input(BenchmarkId::new("delta_encode", size), size, |b, &size| {
             let data: Vec<i64> = (0..size).map(|i| i as i64 * 1000).collect();
-            let mut encoder = DeltaEncoder::new();
 
             b.iter(|| {
-                encoder.encode(black_box(&data)).unwrap();
+                let mut encoder = DeltaEncoder::new();
+                encoder.encode_batch(black_box(&data)).unwrap();
             });
         });
 
         group.bench_with_input(BenchmarkId::new("delta_decode", size), size, |b, &size| {
             let data: Vec<i64> = (0..size).map(|i| i as i64 * 1000).collect();
             let mut encoder = DeltaEncoder::new();
-            let encoded = encoder.encode(&data).unwrap();
-            let mut decoder = DeltaDecoder::new();
+            let encoded = encoder.encode_batch(&data).unwrap();
 
             b.iter(|| {
+                let mut decoder = DeltaDecoder::new();
                 decoder.decode(black_box(&encoded)).unwrap();
             });
         });
@@ -140,7 +140,8 @@ fn bench_downsample(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             let store = create_test_store();
             let router = DownsampleRouter::new(true);
-            let executor = DownsampleQueryExecutor::new(store.clone(), router);
+            let temp_dir = tempdir().unwrap();
+            let executor = DownsampleQueryExecutor::new(store.clone(), router, temp_dir.path().to_path_buf());
 
             // 准备数据
             let labels = vec![
