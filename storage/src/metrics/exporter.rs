@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::metrics::{Metric, MetricType, MetricValue, MetricsRegistry};
 use std::sync::Arc;
 use std::time::Duration;
