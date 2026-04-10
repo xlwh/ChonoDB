@@ -300,7 +300,7 @@ async fn handle_query_range_internal(
     };
 
     let (start, end, step) = match (start, end, step) {
-        (Some(s), Some(e), Some(st)) => (s, e, st),
+        (Some(s), Some(e), Some(st)) => (s * 1000, e * 1000, st),
         _ => {
             return Json(ApiResponse::error(
                 "bad_data",
@@ -365,7 +365,7 @@ async fn handle_query_range_internal(
                 // 预分配 values 容量
                 let mut values = Vec::with_capacity(ts.samples.len());
                 for s in ts.samples {
-                    values.push((s.timestamp as f64 / 1000.0, s.value.to_string()));
+                    values.push((s.timestamp as f64 / 1000.0, format!("{:.6}", s.value)));
                 }
                 
                 // 预分配 metric 容量
