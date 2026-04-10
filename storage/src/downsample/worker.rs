@@ -1,16 +1,17 @@
-use crate::columnstore::DownsampleLevel;
+use crate::columnstore::{DownsampleLevel, BlockWriter};
 use crate::downsample::{DownsampleProcessor, TaskResult};
 use crate::error::Result;
 use crate::memstore::MemStore;
-use crate::model::TimeSeriesId;
+use crate::model::{TimeSeriesId, Labels};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, debug};
+use tracing::{error, debug, info};
 
 /// 降采样工作器
 pub struct DownsampleWorker {
     worker_id: usize,
     store: Arc<MemStore>,
+    data_dir: std::path::PathBuf,
 }
 
 /// 工作器任务
@@ -28,10 +29,12 @@ impl DownsampleWorker {
     pub fn new(
         worker_id: usize,
         store: Arc<MemStore>,
+        data_dir: std::path::PathBuf,
     ) -> Self {
         Self {
             worker_id,
             store,
+            data_dir,
         }
     }
 
@@ -96,13 +99,14 @@ impl DownsampleWorker {
         end_time: i64,
         target_resolution: i64,
     ) -> Result<(u64, u64)> {
-        // 获取时间序列数据
-        let samples = match self.store.get_series(series_id) {
+        // 获取时间序列数据和标签
+        let (samples, labels) = match self.store.get_series(series_id) {
             Some(ts) => {
-                ts.samples
+                let filtered_samples = ts.samples
                     .into_iter()
                     .filter(|s| s.timestamp >= start_time && s.timestamp <= end_time)
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>();
+                (filtered_samples, ts.labels)
             }
             None => {
                 return Ok((0, 0));
@@ -119,13 +123,34 @@ impl DownsampleWorker {
         let downsampled = DownsampleProcessor::downseries(&samples, target_resolution);
         let generated = downsampled.len() as u64;
 
-        // 将降采样数据存储到目标级别
-        // 注意：这里需要将降采样数据存储到持久化存储中
-        // 目前我们只是计算了降采样结果，实际存储逻辑需要根据存储引擎实现
-        // TODO: 实现降采样数据的持久化存储
-        // 临时实现：将降采样数据存储到内存中
-        // 实际实现需要将数据存储到列式存储中
-        
+        // 将降采样数据存储到列式存储中
+        if !downsampled.is_empty() {
+            // 创建降采样数据目录
+            let downsample_dir = self.data_dir.join("downsample");
+            std::fs::create_dir_all(&downsample_dir)?;
+
+            // 创建块写入器
+            let block_id = series_id as u64;
+            let mut block_writer = BlockWriter::new_downsample(
+                &downsample_dir,
+                block_id,
+                3, // 压缩级别
+                DownsampleLevel::from_resolution_ms(target_resolution).unwrap_or(DownsampleLevel::L1),
+            );
+
+            // 将降采样点转换为样本并添加到写入器
+            let downsample_points: Vec<crate::downsample::DownsamplePoint> = downsampled.clone();
+            block_writer.add_downsample_series(series_id, labels, downsample_points);
+
+            // 写入块
+            block_writer.write()?;
+
+            info!(
+                "Worker {} stored downsampled data for series {}: {} points",
+                self.worker_id, series_id, generated
+            );
+        }
+
         debug!(
             "Worker {} processed series {}: {} samples -> {} points",
             self.worker_id, series_id, processed, generated
@@ -146,6 +171,7 @@ impl WorkerPool {
     pub fn new(
         num_workers: usize,
         store: Arc<MemStore>,
+        data_dir: std::path::PathBuf,
         task_buffer: usize,
     ) -> Self {
         let (task_tx, mut task_rx) = mpsc::channel::<WorkerTask>(task_buffer);
@@ -164,6 +190,7 @@ impl WorkerPool {
                 let worker = DownsampleWorker::new(
                     current_worker_id,
                     store.clone(),
+                    data_dir.clone(),
                 );
                 let result_tx = result_tx.clone();
                 
@@ -229,7 +256,8 @@ mod tests {
     #[tokio::test]
     async fn test_worker_pool() {
         let store = create_test_store();
-        let pool = WorkerPool::new(2, store.clone(), 10);
+        let temp_dir = tempdir().unwrap();
+        let pool = WorkerPool::new(2, store.clone(), temp_dir.path().to_path_buf(), 10);
 
         // 创建测试数据
         let labels = vec![

@@ -58,8 +58,12 @@ pub struct ClusterManager {
     config: ClusterConfig,
     nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
     leader_id: Arc<RwLock<Option<String>>>,
+    current_node_id: Arc<RwLock<Option<String>>>,
+    current_node_address: Arc<RwLock<Option<String>>>,
     discovery_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
     heartbeat_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
+    heartbeat_sender_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
+    rpc_manager: Option<Arc<crate::rpc::ClusterRpcManager>>,
 }
 
 impl ClusterManager {
@@ -68,9 +72,28 @@ impl ClusterManager {
             config,
             nodes: Arc::new(RwLock::new(HashMap::new())),
             leader_id: Arc::new(RwLock::new(None)),
+            current_node_id: Arc::new(RwLock::new(None)),
+            current_node_address: Arc::new(RwLock::new(None)),
             discovery_task: Arc::new(RwLock::new(None)),
             heartbeat_task: Arc::new(RwLock::new(None)),
+            heartbeat_sender_task: Arc::new(RwLock::new(None)),
+            rpc_manager: None,
         }
+    }
+
+    /// 设置RPC管理器
+    pub fn with_rpc_manager(mut self, rpc_manager: Arc<crate::rpc::ClusterRpcManager>) -> Self {
+        self.rpc_manager = Some(rpc_manager);
+        self
+    }
+
+    /// 设置当前节点信息
+    pub async fn set_current_node(&self, node_id: String, address: String) {
+        let mut node_id_write = self.current_node_id.write().await;
+        *node_id_write = Some(node_id);
+        
+        let mut address_write = self.current_node_address.write().await;
+        *address_write = Some(address);
     }
 
     pub async fn start(&self) -> Result<()> {
@@ -83,6 +106,11 @@ impl ClusterManager {
         
         // 启动心跳检测任务
         self.start_heartbeat_task().await?;
+        
+        // 启动心跳发送任务
+        if self.rpc_manager.is_some() {
+            self.start_heartbeat_sender_task().await?;
+        }
         
         Ok(())
     }
@@ -327,6 +355,48 @@ impl ClusterManager {
         Ok(None)
     }
 
+    /// 启动心跳发送任务
+    async fn start_heartbeat_sender_task(&self) -> Result<()> {
+        let config = self.config.clone();
+        let nodes = self.nodes.clone();
+        let rpc_manager = self.rpc_manager.clone();
+        let current_node_id = self.current_node_id.clone();
+
+        let handle = tokio::spawn(async move {
+            let mut interval = interval(Duration::from_millis(config.heartbeat_interval_ms));
+
+            loop {
+                interval.tick().await;
+
+                let current_node_id_opt = current_node_id.read().await.clone();
+                
+                if let (Some(node_id), Some(rpc_mgr)) = (current_node_id_opt, &rpc_manager) {
+                    let clients = rpc_mgr.get_all_clients().await;
+                    
+                    for (peer_node_id, client) in clients {
+                        if peer_node_id != node_id {
+                            match client.heartbeat(node_id.clone()).await {
+                                Ok(response) if response.success => {
+                                    debug!("Heartbeat sent to node: {}", peer_node_id);
+                                }
+                                Ok(response) => {
+                                    warn!("Heartbeat failed for node {}: {}", peer_node_id, "unknown error");
+                                }
+                                Err(e) => {
+                                    warn!("Failed to send heartbeat to node {}: {}", peer_node_id, e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let mut heartbeat_sender_task_write = self.heartbeat_sender_task.write().await;
+        *heartbeat_sender_task_write = Some(handle);
+        Ok(())
+    }
+
     /// 停止集群管理器
     pub async fn stop(&self) -> Result<()> {
         // 停止发现任务
@@ -335,56 +405,67 @@ impl ClusterManager {
             task.abort();
         }
         
-        // 停止心跳任务
+        // 停止心跳检测任务
         let mut heartbeat_task_write = self.heartbeat_task.write().await;
         if let Some(task) = heartbeat_task_write.take() {
             task.abort();
         }
+
+        // 停止心跳发送任务
+        let mut heartbeat_sender_task_write = self.heartbeat_sender_task.write().await;
+        if let Some(task) = heartbeat_sender_task_write.take() {
+            task.abort();
+        }
+
         Ok(())
     }
 }
 
 /// 发现节点
 async fn discover_nodes(addr: &str, nodes: &Arc<RwLock<HashMap<String, NodeInfo>>>) -> Result<()> {
-    // 这里实现具体的节点发现逻辑
-    // 例如，通过DNS、etcd或其他服务发现机制
     debug!("Discovering nodes from {}", addr);
     
-    // 模拟节点发现，实际实现应该通过服务发现机制获取节点信息
-    // 这里假设 addr 是一个 DNS 地址，我们解析它来获取节点信息
-    
-    // 模拟发现的节点
-    let discovered_nodes = vec![
-        NodeInfo {
-            node_id: "node-1".to_string(),
-            address: "127.0.0.1:9090".to_string(),
-            status: NodeStatus::Online,
-            last_heartbeat: chrono::Utc::now().timestamp_millis(),
-            shard_count: 10,
-            series_count: 1000,
-            is_leader: false,
-            version: "1.0.0".to_string(),
-        },
-        NodeInfo {
-            node_id: "node-2".to_string(),
-            address: "127.0.0.1:9091".to_string(),
-            status: NodeStatus::Online,
-            last_heartbeat: chrono::Utc::now().timestamp_millis(),
-            shard_count: 10,
-            series_count: 1000,
-            is_leader: false,
-            version: "1.0.0".to_string(),
-        },
-    ];
-    
-    // 注册发现的节点
-    let mut nodes_write = nodes.write().await;
-    for node in discovered_nodes {
-        let node_id = node.node_id.clone();
-        if !nodes_write.contains_key(&node_id) {
-            nodes_write.insert(node_id.clone(), node);
-            info!("Discovered new node: {}", node_id);
+    // 尝试解析地址为SocketAddr
+    if let Ok(socket_addr) = addr.parse::<std::net::SocketAddr>() {
+        // 尝试通过RPC获取节点信息
+        let client = crate::rpc::RpcClient::new(socket_addr);
+        
+        match client.get_cluster_status().await {
+            Ok(cluster_status) => {
+                info!("Successfully discovered cluster from {}", addr);
+                
+                let mut nodes_write = nodes.write().await;
+                for node_info in cluster_status.nodes {
+                    let node_id_clone = node_info.node_id.clone();
+                    let node = NodeInfo {
+                        node_id: node_info.node_id,
+                        address: node_info.address,
+                        status: match node_info.status {
+                            crate::rpc::NodeStatus::Online => NodeStatus::Online,
+                            crate::rpc::NodeStatus::Offline => NodeStatus::Offline,
+                            crate::rpc::NodeStatus::Suspect => NodeStatus::Degraded,
+                        },
+                        last_heartbeat: node_info.last_heartbeat,
+                        shard_count: 0, // 后续可以从集群状态中获取
+                        series_count: 0, // 后续可以从集群状态中获取
+                        is_leader: cluster_status.is_coordinator && cluster_status.node_id == node_id_clone,
+                        version: "1.0.0".to_string(), // 后续可以从集群状态中获取
+                    };
+                    
+                    let node_id = node.node_id.clone();
+                    if !nodes_write.contains_key(&node_id) {
+                        nodes_write.insert(node_id.clone(), node);
+                        info!("Discovered new node: {}", node_id);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to discover nodes from {}: {}", addr, e);
+            }
         }
+    } else {
+        // 如果不是SocketAddr，尝试使用其他发现机制（如DNS、etcd等）
+        debug!("Address {} is not a socket address, trying other discovery methods", addr);
     }
     
     Ok(())
