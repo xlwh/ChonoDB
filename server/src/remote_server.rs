@@ -61,6 +61,9 @@ pub async fn handle_remote_write(
                             series_count = lines.len();
                             total_samples = lines.len();
                             
+                            // 批量写入优化
+                            let mut batch_writes: std::collections::HashMap<Vec<Label>, Vec<Sample>> = std::collections::HashMap::new();
+                            
                             for line in lines {
                                 debug!("Parsing line: {}", line);
 
@@ -137,23 +140,30 @@ pub async fn handle_remote_write(
                                 if let Ok(sample_value) = value_part.parse::<f64>() {
                                     if let Ok(timestamp) = timestamp_part_str.parse::<i64>() {
                                         // 转换为正确的类型
-                                        let labels: Vec<Label> = label_pairs.into_iter().map(|(name, value)| Label::new(name, value)).collect();
-                                        debug!("Writing labels: {:?}, sample: {} @ {}", labels, sample_value, timestamp);
-                                        let sample = Sample::new(timestamp, sample_value);
-                                        
-                                        // 写入数据
-                                        if let Err(e) = state.memstore.write(labels, vec![sample]) {
-                                            error!("Failed to write time series: {}", e);
-                                            // 继续处理其他样本，而不是立即返回
-                                            continue;
-                                        }
-                                        debug!("Write successful");
+                            let mut labels: Vec<Label> = label_pairs.into_iter().map(|(name, value)| Label::new(name, value)).collect();
+                            // 对标签进行排序，与calculate_series_id函数的行为一致
+                            labels.sort_by(|a, b| a.name.cmp(&b.name));
+                            let sample = Sample::new(timestamp, sample_value);
+                            
+                            // 批量收集数据
+                            batch_writes.entry(labels).or_default().push(sample);
                                     } else {
                                         debug!("Failed to parse timestamp: {}", timestamp_part_str);
                                     }
                                 } else {
                                     debug!("Failed to parse value: {}", value_part);
                                 }
+                            }
+                            
+                            // 执行批量写入
+                            for (labels, samples) in batch_writes {
+                                let sample_count = samples.len();
+                                if let Err(e) = state.memstore.write(labels, samples) {
+                                    error!("Failed to write time series: {}", e);
+                                    // 继续处理其他批量，而不是立即返回
+                                    continue;
+                                }
+                                debug!("Batch write successful for {} samples", sample_count);
                             }
                         },
                         Err(e) => {
@@ -175,6 +185,9 @@ pub async fn handle_remote_write(
                     let lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty() && !line.starts_with('#')).collect();
                     series_count = lines.len();
                     total_samples = lines.len();
+                    
+                    // 批量写入优化
+                    let mut batch_writes: std::collections::HashMap<Vec<Label>, Vec<Sample>> = std::collections::HashMap::new();
                     
                     for line in lines {
                         info!("Parsing line (uncompressed): {}", line);
@@ -252,23 +265,30 @@ pub async fn handle_remote_write(
                         if let Ok(sample_value) = value_part.parse::<f64>() {
                             if let Ok(timestamp) = timestamp_part_str.parse::<i64>() {
                                 // 转换为正确的类型
-                                let labels: Vec<Label> = label_pairs.into_iter().map(|(name, value)| Label::new(name, value)).collect();
-                                info!("Writing labels: {:?}, sample: {} @ {}", labels, sample_value, timestamp);
-                                let sample = Sample::new(timestamp, sample_value);
-                                
-                                // 写入数据
-                                if let Err(e) = state.memstore.write(labels, vec![sample]) {
-                                    error!("Failed to write time series: {}", e);
-                                    // 继续处理其他样本，而不是立即返回
-                                    continue;
-                                }
-                                info!("Write successful");
+                            let mut labels: Vec<Label> = label_pairs.into_iter().map(|(name, value)| Label::new(name, value)).collect();
+                            // 对标签进行排序，与calculate_series_id函数的行为一致
+                            labels.sort_by(|a, b| a.name.cmp(&b.name));
+                            let sample = Sample::new(timestamp, sample_value);
+                            
+                            // 批量收集数据
+                            batch_writes.entry(labels).or_default().push(sample);
                             } else {
                                 info!("Failed to parse timestamp: {}", timestamp_part_str);
                             }
                         } else {
                             info!("Failed to parse value: {}", value_part);
                         }
+                    }
+                    
+                    // 执行批量写入
+                    for (labels, samples) in batch_writes {
+                        let sample_count = samples.len();
+                        if let Err(e) = state.memstore.write(labels, samples) {
+                            error!("Failed to write time series: {}", e);
+                            // 继续处理其他批量，而不是立即返回
+                            continue;
+                        }
+                        info!("Batch write successful for {} samples", sample_count);
                     }
                 },
                 Err(e) => {
