@@ -253,14 +253,54 @@ impl CompactionManager {
     async fn load_block_data(
         &self,
         block_id: u64,
-        _all_series: &mut HashMap<TimeSeriesId, (Labels, Vec<Sample>)>,
+        all_series: &mut HashMap<TimeSeriesId, (Labels, Vec<Sample>)>,
     ) -> Result<()> {
-        // In a real implementation, this would load the block from disk
-        // and extract all series data
-
-        // For now, this is a placeholder
         debug!("Loading block {} for compaction", block_id);
 
+        let block_path = {
+            let block_manager = self
+                .block_manager
+                .read()
+                .map_err(|_| Error::Internal("Failed to acquire read lock".to_string()))?;
+
+            let block_info = block_manager
+                .get_block(block_id)
+                .ok_or_else(|| Error::NotFound(format!("Block {} not found", block_id)))?;
+
+            block_info.path.clone()
+        };
+
+        if !block_path.exists() {
+            warn!("Block path {:?} does not exist, skipping", block_path);
+            return Ok(());
+        }
+
+        let reader = crate::columnstore::BlockReader::open(&block_path)?;
+        let index_entries = reader.read_index()?;
+        let entry_count = index_entries.len();
+
+        for entry in index_entries {
+            let series_id = entry.series_id;
+            let labels = entry.labels.clone();
+
+            match reader.query(series_id, i64::MIN, i64::MAX) {
+                Ok(samples) => {
+                    all_series
+                        .entry(series_id)
+                        .or_insert_with(|| (labels, Vec::new()))
+                        .1
+                        .extend(samples);
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to read series {} from block {}: {}",
+                        series_id, block_id, e
+                    );
+                }
+            }
+        }
+
+        debug!("Loaded {} series from block {}", entry_count, block_id);
         Ok(())
     }
 

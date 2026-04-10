@@ -109,39 +109,63 @@ impl FlushManager {
     }
 
     async fn flush_memstore(&self, memstore: &Arc<MemStore>) -> Result<FlushedBlockInfo> {
-        // This is a simplified implementation
-        // In production, this would:
-        // 1. Lock the head block for reading
-        // 2. Extract frozen chunks
-        // 3. Write to column store
-        // 4. Clear flushed data from memstore
-        // 5. Update WAL
-        
         let block_id = self.generate_block_id();
-        let block_dir = self.data_dir.join("blocks");
-        
+        let block_dir = self.data_dir.join("blocks").join(block_id.to_string());
+
         std::fs::create_dir_all(&block_dir)?;
-        
-        // Create block writer
-        let writer = BlockWriter::new(&block_dir, block_id, 3);
-        
-        // Get all series from memstore and write to block
-        // This is a placeholder - actual implementation would iterate through head block
-        let series_count = memstore.series_count();
-        let sample_count = memstore.total_samples();
-        
-        // Write the block
+
+        let mut writer = BlockWriter::new(&block_dir, block_id, 3);
+
+        let series_ids = memstore.get_all_series_ids();
+        let mut total_series = 0u64;
+        let mut total_samples = 0u64;
+        let mut min_ts = i64::MAX;
+        let mut max_ts = i64::MIN;
+
+        for series_id in &series_ids {
+            if let Some(ts) = memstore.get_series(*series_id) {
+                let labels = ts.labels.clone();
+                let samples = ts.samples.clone();
+
+                if !samples.is_empty() {
+                    for sample in &samples {
+                        min_ts = min_ts.min(sample.timestamp);
+                        max_ts = max_ts.max(sample.timestamp);
+                    }
+
+                    total_samples += samples.len() as u64;
+                    writer.add_series(*series_id, labels, samples);
+                    total_series += 1;
+                }
+            }
+        }
+
+        if total_series == 0 {
+            std::fs::remove_dir_all(&block_dir)?;
+            return Ok(FlushedBlockInfo {
+                block_id,
+                series_count: 0,
+                sample_count: 0,
+                min_timestamp: 0,
+                max_timestamp: 0,
+            });
+        }
+
         let block = writer.write()?;
-        
-        // Clear flushed data from memstore (simplified)
+
         memstore.flush()?;
-        
+
+        info!(
+            "Flushed block {}: {} series, {} samples, time range [{}, {}]",
+            block_id, total_series, total_samples, min_ts, max_ts
+        );
+
         Ok(FlushedBlockInfo {
             block_id,
-            series_count: series_count as u64,
-            sample_count: sample_count as u64,
-            min_timestamp: block.meta.min_timestamp,
-            max_timestamp: block.meta.max_timestamp,
+            series_count: total_series,
+            sample_count: total_samples,
+            min_timestamp: if min_ts == i64::MAX { block.meta.min_timestamp } else { min_ts },
+            max_timestamp: if max_ts == i64::MIN { block.meta.max_timestamp } else { max_ts },
         })
     }
 

@@ -257,11 +257,11 @@ impl BlockReader {
 }
 
 #[derive(Debug, Clone)]
-struct SeriesIndexEntry {
-    series_id: TimeSeriesId,
-    labels: Labels,
-    offset: u64,
-    count: u64,
+pub struct SeriesIndexEntry {
+    pub series_id: TimeSeriesId,
+    pub labels: Labels,
+    pub offset: u64,
+    pub count: u64,
 }
 
 fn labels_match(series_labels: &Labels, query_labels: &Labels) -> bool {

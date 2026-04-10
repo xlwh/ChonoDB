@@ -8,6 +8,8 @@ pub use column::{Column, ColumnBuilder, ColumnType};
 pub use block::{Block, BlockMeta, BlockBuilder, BLOCK_MAGIC, BLOCK_VERSION};
 pub use writer::BlockWriter;
 pub use reader::BlockReader;
+pub use reader::BlockManager as ColumnBlockManager;
+pub use reader::SeriesIndexEntry;
 pub use block_format::{
     BlockHeader, BlockType, CompressionType, ColumnData, ColumnType as BlockColumnType,
     BlockBuilder as ChronoBlockBuilder, BlockReader as ChronoBlockReader,

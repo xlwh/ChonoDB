@@ -1,10 +1,14 @@
 pub mod yaml_config;
+pub mod manager;
 
 pub use yaml_config::{
     ChronoDBConfig, StorageConfigYaml, DownsamplingConfigYaml, DownsampleLevelConfig,
     DownsampleTaskConfig, MemoryConfigYaml, CompressionConfigYaml, ColumnCompressionConfig,
     ValueColumnCompressionConfig, QueryConfigYaml, RetentionConfigYaml, LogConfigYaml,
+    DistributedConfigYaml, ShardConfigYaml, ReplicationConfigYaml, ClusterConfigYaml,
 };
+
+pub use manager::ConfigManager;
 
 use serde::{Deserialize, Serialize};
 

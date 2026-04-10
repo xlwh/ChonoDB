@@ -233,24 +233,28 @@ impl DownsampleQueryExecutor {
             level.resolution_ms()
         );
 
-        // 检查是否有可用的降采样数据目录
         let downsample_dir = self.data_dir.join("downsample");
         let level_str = format!("L{}", level as u8);
-        let level_dir = downsample_dir.join(level_str);
-        
-        if downsample_dir.exists() && level_dir.exists() {
-            info!(
-                "Found downsample data directory, will use pre-downsampled data when available"
-            );
-            // TODO: 这里可以添加从列式存储读取降采样数据的逻辑
-            // 目前先使用实时降采样，因为BlockManager是私有的
+        let level_dir = downsample_dir.join(&level_str);
+
+        if level_dir.exists() {
+            match self.query_from_columnstore(series_ids, start, end, &level_dir, level).await {
+                Ok(results) if !results.is_empty() => {
+                    info!("Read downsampled data from column store for level {}", level_str);
+                    return Ok(results);
+                }
+                Ok(_) => {
+                    debug!("No downsampled data found in column store for level {}", level_str);
+                }
+                Err(e) => {
+                    warn!("Failed to read downsampled data from column store: {}, falling back to real-time", e);
+                }
+            }
         }
 
-        // 查询原始数据并实时降采样
         let raw_results = self.query_raw(series_ids, start, end).await?;
         let resolution = level.resolution_ms();
 
-        // 实时降采样
         let mut downsampled_results = Vec::new();
         for series in raw_results {
             let downsampled = self.downsample_series(&series, resolution)?;
@@ -260,6 +264,41 @@ impl DownsampleQueryExecutor {
         }
 
         Ok(downsampled_results)
+    }
+
+    async fn query_from_columnstore(
+        &self,
+        series_ids: &[u64],
+        start: i64,
+        end: i64,
+        level_dir: &std::path::Path,
+        _level: DownsampleLevel,
+    ) -> Result<Vec<TimeSeries>> {
+        let block_manager = crate::columnstore::ColumnBlockManager::new(level_dir)?;
+
+        let blocks = block_manager.find_blocks_in_range(start, end);
+        if blocks.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut results_map: std::collections::HashMap<u64, TimeSeries> = std::collections::HashMap::new();
+
+        for block_reader in blocks {
+            for &series_id in series_ids {
+                match block_reader.query(series_id, start, end) {
+                    Ok(samples) if !samples.is_empty() => {
+                        results_map
+                            .entry(series_id)
+                            .or_insert_with(|| TimeSeries::new(series_id, Vec::new()))
+                            .add_samples(samples);
+                    }
+                    Ok(_) => {}
+                    Err(_) => {}
+                }
+            }
+        }
+
+        Ok(results_map.into_values().collect())
     }
 
     /// 对单个时间序列进行降采样
