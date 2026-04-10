@@ -1,0 +1,65 @@
+.sider {
+  background: #fff !important;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.05);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: auto;
+  transition: all 0.2s;
+  z-index: 20;
+}
+
+.siderHidden {
+  position: fixed;
+  left: -200px;
+}
+
+.logo {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid #f0f0f0;
+  background: linear-gradient(135deg, #1890ff 0%, #096dd9 100%);
+}
+
+.logoText {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.menu {
+  border-right: none !important;
+  height: calc(100% - 64px);
+}
+
+.menu :global(.ant-menu-item) {
+  margin: 4px 8px;
+  border-radius: 4px;
+}
+
+.menu :global(.ant-menu-item-selected) {
+  background: #e6f7ff !important;
+}
+
+@media (max-width: 768px) {
+  .sider {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 100;
+  }
+
+  .siderHidden {
+    left: -200px;
+  }
+}
+
+@media (max-width: 576px) {
+  .logoText {
+    font-size: 16px;
+  }
+}

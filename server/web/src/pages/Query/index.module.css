@@ -1,0 +1,325 @@
+.container {
+  padding: 0;
+}
+
+.editor {
+  margin-bottom: 16px;
+}
+
+.editorContainer {
+  position: relative;
+}
+
+.editorWrapper {
+  position: relative;
+  border: 1px solid var(--border-color, #d9d9d9);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fafafa;
+}
+
+.editorWrapper:focus-within {
+  border-color: var(--primary-color, #1890ff);
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+}
+
+.highlightLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 8px 12px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow: auto;
+  pointer-events: none;
+  color: #333;
+}
+
+.textareaLayer {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 100px;
+  padding: 8px 12px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  color: transparent;
+  caret-color: #333;
+  background: transparent;
+  border: none;
+  resize: vertical;
+  outline: none;
+}
+
+.textareaLayer::placeholder {
+  color: #bfbfbf;
+}
+
+.textareaLayer::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.textareaLayer::-webkit-scrollbar-thumb {
+  background: #d9d9d9;
+  border-radius: 4px;
+}
+
+.textareaLayer::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.editorHint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #8c8c8c;
+  text-align: right;
+}
+
+.tokenFunction {
+  color: #722ed1;
+  font-weight: 500;
+}
+
+.tokenKeyword {
+  color: #1890ff;
+  font-weight: 500;
+}
+
+.tokenMetric {
+  color: #13c2c2;
+}
+
+.tokenString {
+  color: #52c41a;
+}
+
+.tokenNumber {
+  color: #fa8c16;
+}
+
+.tokenOperator {
+  color: #eb2f96;
+}
+
+.tokenPunctuation {
+  color: #595959;
+}
+
+.tokenComment {
+  color: #8c8c8c;
+  font-style: italic;
+}
+
+.actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.tabs {
+  margin-top: 16px;
+}
+
+.timeRangePicker {
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.stepSelector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stepLabel {
+  font-size: 14px;
+  color: #595959;
+}
+
+.labelsContainer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.labelTag {
+  margin: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  background: #f0f5ff;
+  border: 1px solid #adc6ff;
+}
+
+.valueText {
+  font-size: 14px;
+}
+
+.scalarResult {
+  padding: 16px;
+  background: #fafafa;
+  border-radius: 6px;
+}
+
+.historyContainer {
+  margin-top: 16px;
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 6px;
+}
+
+.historyHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.historyList {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.historyItem {
+  padding: 8px 0 !important;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.historyItem:last-child {
+  border-bottom: none;
+}
+
+.historyItemContent {
+  width: 100%;
+}
+
+.historyItemHeader {
+  margin-bottom: 4px;
+}
+
+.historyTime {
+  font-size: 12px;
+}
+
+.historyQuery {
+  font-size: 13px;
+  margin-bottom: 8px !important;
+  background: #fff;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
+}
+
+.historyActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.resultHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.resultStats {
+  display: flex;
+  gap: 16px;
+}
+
+.statItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.viewToggle {
+  margin-bottom: 16px;
+}
+
+.queryTypeTabs {
+  margin-bottom: 16px;
+}
+
+.errorAlert {
+  margin-bottom: 16px;
+}
+
+.loadingContainer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 200px;
+}
+
+.chartContainer {
+  background: #fff;
+  padding: 16px;
+  border-radius: 6px;
+  border: 1px solid #f0f0f0;
+  margin-bottom: 16px;
+}
+
+.tableContainer {
+  background: #fff;
+  padding: 16px;
+  border-radius: 6px;
+  border: 1px solid #f0f0f0;
+}
+
+.queryInfo {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #f6f6f6;
+  border-radius: 6px;
+}
+
+.queryInfoItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.queryInfoLabel {
+  color: #8c8c8c;
+  font-size: 13px;
+}
+
+.queryInfoValue {
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.exampleQueries {
+  margin-top: 8px;
+}
+
+.exampleQuery {
+  cursor: pointer;
+  padding: 4px 8px;
+  margin: 2px;
+  display: inline-block;
+  background: #f0f5ff;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.exampleQuery:hover {
+  background: #d6e4ff;
+}

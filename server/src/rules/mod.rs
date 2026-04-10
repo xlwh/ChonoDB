@@ -32,7 +32,7 @@ pub mod alerting;
 pub mod recording;
 pub mod evaluator;
 
-pub use alerting::{AlertRule, AlertState, Alert, AlertManager};
+pub use alerting::{AlertRule, AlertState, Alert, AlertManager, AlertCondition};
 pub use recording::{RecordingRule, RecordingManager};
 pub use evaluator::RuleEvaluator;
 
@@ -163,6 +163,22 @@ impl RuleManager {
     /// 获取告警规则数量
     pub fn get_alerting_rule_count(&self) -> usize {
         self.get_alerting_rules().len()
+    }
+    
+    /// 添加告警规则到指定组
+    pub fn add_alert_rule(&mut self, group_name: String, rule: AlertRule) -> crate::Result<()> {
+        if let Some(group) = self.groups.iter_mut().find(|g| g.name == group_name) {
+            group.rules.push(Rule::Alerting(rule));
+        } else {
+            let new_group = RuleGroup {
+                name: group_name,
+                interval: None,
+                limit: None,
+                rules: vec![Rule::Alerting(rule)],
+            };
+            self.groups.push(new_group);
+        }
+        Ok(())
     }
 }
 

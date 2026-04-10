@@ -6,6 +6,7 @@ pub mod server;
 pub mod state;
 pub mod targets;
 pub mod remote_server;
+pub mod static_files;
 
 pub use server::Server;
 pub use config::ServerConfig;

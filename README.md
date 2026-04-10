@@ -72,6 +72,25 @@ curl "http://localhost:9090/api/v1/query?query=sum(cpu_usage_percent)"
 curl "http://localhost:9090/api/v1/query?query=cpu_usage_percent{job="frontend"}"
 ```
 
+#### 3. Web 管理界面
+
+ChronoDB 提供了功能完整的 Web 管理界面，支持可视化操作：
+
+```bash
+# 启动服务器后，访问 Web 界面
+open http://localhost:9090/ui
+```
+
+**Web 界面功能：**
+- 📊 **数据查询**：PromQL 查询编辑器，支持即时查询和范围查询，结果可视化展示
+- ✏️ **数据写入**：单条和批量数据写入，支持 JSON 格式
+- 📈 **统计监控**：存储、查询性能、内存使用等实时统计
+- 🌐 **集群管理**：节点状态监控、分片分布可视化（分布式模式）
+- 🔔 **告警管理**：告警规则配置和当前告警查看
+- ⚙️ **配置管理**：在线查看和修改系统配置
+
+详细使用说明请参考 [Web 管理界面文档](docs/Usage.md#web-管理界面)。
+
 ## 功能特性
 
 ### 已实现功能
@@ -114,6 +133,13 @@ curl "http://localhost:9090/api/v1/query?query=cpu_usage_percent{job="frontend"}
   - Write-Ahead Log
   - 数据刷盘
   - 块压缩
+- ✅ **Web 管理界面**：
+  - 数据查询和可视化
+  - 数据写入界面
+  - 系统统计监控
+  - 集群管理
+  - 告警管理
+  - 配置管理
 
 ## 性能测试
 
