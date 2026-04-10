@@ -32,19 +32,32 @@ impl Chunk {
     }
 
     pub fn add(&mut self, sample: Sample) -> Result<()> {
-        if !self.timestamps.is_empty() {
-            if sample.timestamp <= self.max_timestamp {
-                return Err(Error::InvalidTimestamp(sample.timestamp));
-            }
+        if !self.timestamps.is_empty() && sample.timestamp <= self.max_timestamp {
+            self.timestamps.push(sample.timestamp);
+            self.values.push(sample.value);
+            self.sort_by_timestamp();
+        } else {
+            self.timestamps.push(sample.timestamp);
+            self.values.push(sample.value);
         }
-        
-        self.timestamps.push(sample.timestamp);
-        self.values.push(sample.value);
-        
+
         self.min_timestamp = self.min_timestamp.min(sample.timestamp);
         self.max_timestamp = self.max_timestamp.max(sample.timestamp);
-        
+
         Ok(())
+    }
+
+    fn sort_by_timestamp(&mut self) {
+        let mut indexed: Vec<(usize, Timestamp, f64)> = self
+            .timestamps
+            .iter()
+            .zip(self.values.iter())
+            .enumerate()
+            .map(|(i, (&t, &v))| (i, t, v))
+            .collect();
+        indexed.sort_by_key(|&(_, t, _)| t);
+        self.timestamps = indexed.iter().map(|&(_, t, _)| t).collect();
+        self.values = indexed.iter().map(|&(_, _, v)| v).collect();
     }
 
     pub fn is_empty(&self) -> bool {
@@ -266,5 +279,37 @@ mod tests {
             assert_eq!(o.timestamp, d.timestamp);
             assert!((o.value - d.value).abs() < f64::EPSILON);
         }
+    }
+
+    #[test]
+    fn test_chunk_out_of_order_timestamps() {
+        let mut chunk = Chunk::new();
+
+        chunk.add(Sample::new(3000, 3.0)).unwrap();
+        chunk.add(Sample::new(1000, 1.0)).unwrap();
+        chunk.add(Sample::new(2000, 2.0)).unwrap();
+
+        assert_eq!(chunk.len(), 3);
+        assert_eq!(chunk.min_timestamp(), Some(1000));
+        assert_eq!(chunk.max_timestamp(), Some(3000));
+
+        let samples: Vec<_> = chunk.samples().collect();
+        assert_eq!(samples[0].timestamp, 1000);
+        assert_eq!(samples[0].value, 1.0);
+        assert_eq!(samples[1].timestamp, 2000);
+        assert_eq!(samples[1].value, 2.0);
+        assert_eq!(samples[2].timestamp, 3000);
+        assert_eq!(samples[2].value, 3.0);
+    }
+
+    #[test]
+    fn test_chunk_duplicate_timestamp() {
+        let mut chunk = Chunk::new();
+
+        chunk.add(Sample::new(1000, 1.0)).unwrap();
+        chunk.add(Sample::new(1000, 2.0)).unwrap();
+        chunk.add(Sample::new(2000, 3.0)).unwrap();
+
+        assert_eq!(chunk.len(), 3);
     }
 }

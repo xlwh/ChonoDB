@@ -96,6 +96,108 @@ pub struct StorageConfigYaml {
     /// 存储后端: local | hdfs | s3
     #[serde(default = "default_storage_backend")]
     pub backend: String,
+
+    /// 分布式配置
+    #[serde(default)]
+    pub distributed: DistributedConfigYaml,
+}
+
+/// 分布式配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DistributedConfigYaml {
+    /// 节点ID
+    #[serde(default)]
+    pub node_id: Option<String>,
+
+    /// 集群名称
+    #[serde(default = "default_cluster_name")]
+    pub cluster_name: String,
+
+    /// 节点地址
+    #[serde(default = "default_node_address")]
+    pub node_address: String,
+
+    /// 协调器地址
+    #[serde(default = "default_coordinator_address")]
+    pub coordinator_address: String,
+
+    /// 是否作为协调器
+    #[serde(default)]
+    pub is_coordinator: bool,
+
+    /// 分片配置
+    #[serde(default)]
+    pub shard: ShardConfigYaml,
+
+    /// 副本配置
+    #[serde(default)]
+    pub replication: ReplicationConfigYaml,
+
+    /// 集群配置
+    #[serde(default)]
+    pub cluster: ClusterConfigYaml,
+}
+
+/// 分片配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShardConfigYaml {
+    /// 分片数量
+    #[serde(default = "default_shard_count")]
+    pub count: u64,
+
+    /// 分片策略: hash | range
+    #[serde(default = "default_shard_strategy")]
+    pub strategy: String,
+
+    /// 一致性哈希虚拟节点数
+    #[serde(default = "default_virtual_nodes")]
+    pub virtual_nodes: u32,
+}
+
+/// 副本配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicationConfigYaml {
+    #[serde(default = "default_replication_factor")]
+    pub factor: usize,
+
+    #[serde(default = "default_replication_strategy")]
+    pub strategy: String,
+
+    #[serde(default = "default_replication_timeout")]
+    pub timeout: String,
+
+    #[serde(default = "default_min_read_replicas")]
+    pub min_read_replicas: u32,
+
+    #[serde(default = "default_replication_queue_size")]
+    pub queue_size: usize,
+
+    #[serde(default = "default_replication_batch_size")]
+    pub batch_size: usize,
+}
+
+fn default_min_read_replicas() -> u32 { 1 }
+fn default_replication_queue_size() -> usize { 10000 }
+fn default_replication_batch_size() -> usize { 100 }
+
+/// 集群配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterConfigYaml {
+    /// 心跳间隔（毫秒）
+    #[serde(default = "default_heartbeat_interval")]
+    pub heartbeat_interval_ms: u64,
+
+    /// 节点超时时间（毫秒）
+    #[serde(default = "default_node_timeout")]
+    pub node_timeout_ms: u64,
+
+    /// 节点发现地址
+    #[serde(default)]
+    pub discovery_addresses: Vec<String>,
+
+    /// 是否启用自动节点发现
+    #[serde(default)]
+    pub enable_auto_discovery: bool,
 }
 
 fn default_storage_mode() -> String {
@@ -110,12 +212,106 @@ fn default_storage_backend() -> String {
     "local".to_string()
 }
 
+fn default_cluster_name() -> String {
+    "chronodb-cluster".to_string()
+}
+
+fn default_node_address() -> String {
+    "127.0.0.1:9090".to_string()
+}
+
+fn default_coordinator_address() -> String {
+    "127.0.0.1:9091".to_string()
+}
+
+fn default_shard_count() -> u64 {
+    16
+}
+
+fn default_shard_strategy() -> String {
+    "hash".to_string()
+}
+
+fn default_virtual_nodes() -> u32 {
+    128
+}
+
+fn default_replication_factor() -> usize {
+    3
+}
+
+fn default_replication_strategy() -> String {
+    "asynchronous".to_string()
+}
+
+fn default_replication_timeout() -> String {
+    "5s".to_string()
+}
+
+fn default_heartbeat_interval() -> u64 {
+    5000
+}
+
+fn default_node_timeout() -> u64 {
+    15000
+}
+
 impl Default for StorageConfigYaml {
     fn default() -> Self {
         Self {
             mode: default_storage_mode(),
             data_dir: default_data_dir(),
             backend: default_storage_backend(),
+            distributed: DistributedConfigYaml::default(),
+        }
+    }
+}
+
+impl Default for DistributedConfigYaml {
+    fn default() -> Self {
+        Self {
+            node_id: None,
+            cluster_name: default_cluster_name(),
+            node_address: default_node_address(),
+            coordinator_address: default_coordinator_address(),
+            is_coordinator: false,
+            shard: ShardConfigYaml::default(),
+            replication: ReplicationConfigYaml::default(),
+            cluster: ClusterConfigYaml::default(),
+        }
+    }
+}
+
+impl Default for ShardConfigYaml {
+    fn default() -> Self {
+        Self {
+            count: default_shard_count(),
+            strategy: default_shard_strategy(),
+            virtual_nodes: default_virtual_nodes(),
+        }
+    }
+}
+
+impl Default for ReplicationConfigYaml {
+    fn default() -> Self {
+        Self {
+            factor: default_replication_factor(),
+            strategy: default_replication_strategy(),
+            timeout: default_replication_timeout(),
+            min_read_replicas: default_min_read_replicas(),
+            queue_size: default_replication_queue_size(),
+            batch_size: default_replication_batch_size(),
+        }
+    }
+}
+
+impl Default for ClusterConfigYaml {
+    fn default() -> Self {
+        Self {
+            heartbeat_interval_ms: default_heartbeat_interval(),
+            node_timeout_ms: default_node_timeout(),
+            discovery_addresses: Vec::new(),
+            enable_auto_discovery: false,
         }
     }
 }

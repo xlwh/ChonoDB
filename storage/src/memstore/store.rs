@@ -59,26 +59,28 @@ impl MemStore {
         })
     }
 
-    pub fn write(&self, labels: Labels, samples: Vec<Sample>) -> Result<()> {
+    pub fn write(&self, labels: Labels, mut samples: Vec<Sample>) -> Result<()> {
         let series_id = self.head.get_or_create_series(labels.clone())?;
-        
+
         if let Some(ref wal) = self.wal {
             wal.log_write(series_id, &labels, &samples)?;
         }
-        
+
+        samples.sort_by_key(|s| s.timestamp);
+
         for sample in samples {
             self.head.add_sample(series_id, sample)?;
-            
+
             let mut stats = self.stats.write();
             stats.total_samples += 1;
             stats.writes += 1;
         }
-        
+
         {
             let mut stats = self.stats.write();
             stats.total_series = self.head.series_count() as u64;
         }
-        
+
         Ok(())
     }
 

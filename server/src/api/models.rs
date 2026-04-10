@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// 查询请求
 #[derive(Debug, Clone, Deserialize)]
 pub struct QueryRequest {
     pub query: String,
@@ -9,7 +8,6 @@ pub struct QueryRequest {
     pub timeout: Option<String>,
 }
 
-/// 范围查询请求
 #[derive(Debug, Clone, Deserialize)]
 pub struct QueryRangeRequest {
     pub query: String,
@@ -19,7 +17,6 @@ pub struct QueryRangeRequest {
     pub timeout: Option<String>,
 }
 
-/// 系列请求
 #[derive(Debug, Clone, Deserialize)]
 pub struct SeriesRequest {
     #[serde(rename = "match[]")]
@@ -28,7 +25,6 @@ pub struct SeriesRequest {
     pub end: Option<i64>,
 }
 
-/// 标签值请求
 #[derive(Debug, Clone, Deserialize)]
 pub struct LabelValuesRequest {
     pub name: String,
@@ -36,7 +32,6 @@ pub struct LabelValuesRequest {
     pub end: Option<i64>,
 }
 
-/// 目标信息
 #[derive(Debug, Clone, Serialize)]
 pub struct TargetInfo {
     pub discovered_labels: HashMap<String, String>,
@@ -48,7 +43,6 @@ pub struct TargetInfo {
     pub health: String,
 }
 
-/// 规则信息
 #[derive(Debug, Clone, Serialize)]
 pub struct RuleInfo {
     pub name: String,
@@ -62,7 +56,6 @@ pub struct RuleInfo {
     pub alerts: Option<Vec<AlertInfo>>,
 }
 
-/// 告警信息
 #[derive(Debug, Clone, Serialize)]
 pub struct AlertInfo {
     pub labels: HashMap<String, String>,
@@ -72,7 +65,6 @@ pub struct AlertInfo {
     pub value: f64,
 }
 
-/// 运行时信息
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeInfo {
     pub start_time: String,
@@ -89,7 +81,6 @@ pub struct RuntimeInfo {
     pub go_os: String,
 }
 
-/// 构建信息
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildInfo {
     pub version: String,
@@ -98,4 +89,42 @@ pub struct BuildInfo {
     pub build_user: String,
     pub build_date: String,
     pub go_version: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OpenTSDBPutRequest {
+    pub metric: String,
+    pub timestamp: i64,
+    pub value: serde_json::Value,
+    pub tags: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenTSDBPutSummary {
+    pub failed: usize,
+    pub success: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenTSDBPutDetail {
+    pub failed: usize,
+    pub success: usize,
+    pub errors: Vec<OpenTSDBPutError>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenTSDBPutError {
+    pub datapoint: OpenTSDBPutRequest,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenTSDBErrorResponse {
+    pub error: OpenTSDBErrorDetail,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenTSDBErrorDetail {
+    pub code: u16,
+    pub message: String,
 }

@@ -1,6 +1,8 @@
 use crate::error::{Error, Result};
+use crate::memstore::MemStore;
 use crate::model::{TimeSeries, TimeSeriesId};
-use crate::query::{QueryPlan, QueryResult};
+use crate::query::planner::{PlanType, QueryPlan};
+use crate::query::QueryResult;
 use crate::rpc::ClusterRpcManager;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -12,6 +14,7 @@ use tracing::{debug, error, info, warn};
 pub struct QueryCoordinator {
     rpc_manager: Arc<ClusterRpcManager>,
     shard_manager: Arc<RwLock<ShardManager>>,
+    mem_store: Option<Arc<MemStore>>,
     config: CoordinatorConfig,
     query_cache: Arc<RwLock<HashMap<String, (QueryResult, SystemTime)>>>,
     semaphore: Arc<Semaphore>,
@@ -201,11 +204,21 @@ impl QueryCoordinator {
         Self {
             rpc_manager,
             shard_manager,
+            mem_store: None,
             config,
             query_cache: Arc::new(RwLock::new(HashMap::new())),
             semaphore: Arc::new(Semaphore::new(max_concurrent_queries)),
             stats: Arc::new(RwLock::new(QueryStats::default())),
         }
+    }
+
+    pub fn with_mem_store(mut self, mem_store: Arc<MemStore>) -> Self {
+        self.mem_store = Some(mem_store);
+        self
+    }
+
+    pub fn set_mem_store(&mut self, mem_store: Arc<MemStore>) {
+        self.mem_store = Some(mem_store);
     }
 
     /// 执行分布式查询
@@ -278,11 +291,67 @@ impl QueryCoordinator {
     }
 
     /// 从查询计划中提取系列ID
-    async fn extract_series_ids(&self, _plan: &QueryPlan) -> Result<Vec<TimeSeriesId>> {
-        // 简化实现：根据查询计划中的匹配器获取系列ID
-        // 实际实现需要查询元数据服务
-        debug!("Extracting series IDs from query plan");
-        Ok(Vec::new())
+    async fn extract_series_ids(&self, plan: &QueryPlan) -> Result<Vec<TimeSeriesId>> {
+        let matchers = Self::extract_matchers_from_plan(&plan.plan_type);
+
+        if matchers.is_empty() {
+            debug!("No matchers found in query plan, returning all series");
+            if let Some(ref mem_store) = self.mem_store {
+                return Ok(mem_store.get_all_series_ids());
+            }
+            return Ok(Vec::new());
+        }
+
+        debug!("Extracting series IDs with matchers: {:?}", matchers);
+
+        if let Some(ref mem_store) = self.mem_store {
+            let start = plan.start;
+            let end = plan.end;
+            match mem_store.query(&matchers, start, end) {
+                Ok(series_list) => {
+                    let series_ids: Vec<TimeSeriesId> =
+                        series_list.iter().map(|ts| ts.id).collect();
+                    debug!("Found {} series from local index", series_ids.len());
+                    Ok(series_ids)
+                }
+                Err(e) => {
+                    warn!("Failed to query local index: {}", e);
+                    Ok(Vec::new())
+                }
+            }
+        } else {
+            debug!("No local mem_store available, cannot extract series IDs");
+            Ok(Vec::new())
+        }
+    }
+
+    fn extract_matchers_from_plan(plan_type: &PlanType) -> Vec<(String, String)> {
+        match plan_type {
+            PlanType::VectorQuery(vq) => vq.matchers.clone(),
+            PlanType::MatrixQuery(mq) => mq.vector_plan.matchers.clone(),
+            PlanType::Call(call) => {
+                for arg in &call.args {
+                    let matchers = Self::extract_matchers_from_plan(&arg.plan_type);
+                    if !matchers.is_empty() {
+                        return matchers;
+                    }
+                }
+                Vec::new()
+            }
+            PlanType::BinaryExpr(bin) => {
+                let lhs = Self::extract_matchers_from_plan(&bin.lhs.plan_type);
+                if !lhs.is_empty() {
+                    return lhs;
+                }
+                Self::extract_matchers_from_plan(&bin.rhs.plan_type)
+            }
+            PlanType::UnaryExpr(unary) => {
+                Self::extract_matchers_from_plan(&unary.expr.plan_type)
+            }
+            PlanType::Aggregation(agg) => {
+                Self::extract_matchers_from_plan(&agg.expr.plan_type)
+            }
+        }
     }
 
     /// 路由查询到分片

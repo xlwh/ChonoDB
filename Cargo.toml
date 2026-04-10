@@ -2,7 +2,7 @@
 members = [
     "storage",
     "chronodb-cli",
-    "server",
+    "server", "perf-test",
 ]
 resolver = "2"
 

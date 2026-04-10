@@ -41,6 +41,53 @@ impl Default for ReplicationConfig {
     }
 }
 
+impl ReplicationConfig {
+    /// 从YAML配置创建副本配置
+    pub fn from_yaml_config(yaml_config: &crate::config::ReplicationConfigYaml) -> Self {
+        let replication_timeout_ms = parse_duration(&yaml_config.timeout).unwrap_or(5000);
+
+        Self {
+            replication_factor: yaml_config.factor as u32,
+            min_write_replicas: (yaml_config.factor as u32).saturating_sub(1),
+            min_read_replicas: yaml_config.min_read_replicas,
+            async_replication: yaml_config.strategy == "asynchronous",
+            replication_timeout_ms,
+            replication_queue_size: yaml_config.queue_size,
+            batch_size: yaml_config.batch_size,
+        }
+    }
+}
+
+/// 解析时间字符串为毫秒
+fn parse_duration(duration: &str) -> Option<u64> {
+    let duration = duration.trim();
+
+    if duration.is_empty() {
+        return None;
+    }
+
+    if let Ok(value) = duration.parse::<u64>() {
+        return Some(value);
+    }
+
+    if let Some((value, unit)) = duration.rsplit_once(|c: char| !c.is_ascii_digit()) {
+        if let Ok(value) = value.parse::<u64>() {
+            match unit.trim() {
+                "ms" => Some(value),
+                "s" => Some(value * 1000),
+                "m" => Some(value * 60 * 1000),
+                "h" => Some(value * 60 * 60 * 1000),
+                "d" => Some(value * 24 * 60 * 60 * 1000),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
 /// 副本放置策略
 #[derive(Debug, Clone)]
 pub struct ReplicaPlacement {
@@ -129,6 +176,7 @@ impl ReplicationManager {
     /// 启动复制工作线程
     async fn start_replication_worker(&self, worker_id: usize) -> tokio::task::JoinHandle<()> {
         let replication_queue = self.replication_queue.clone();
+        let replication_log = self.replication_log.clone();
         let rpc_manager = self.rpc_manager.clone();
         let config = self.config.clone();
         let metrics = self.metrics.clone();
@@ -203,11 +251,25 @@ impl ReplicationManager {
                             metrics_write.successful_replications += 1;
                             let latency = start_time.elapsed().unwrap().as_millis() as f64;
                             metrics_write.replication_latency_ms = metrics_write.replication_latency_ms * 0.9 + latency * 0.1 ;
+
+                            let mut log = replication_log.write().await;
+                            for entry in log.iter_mut() {
+                                if entry.shard_id == task.shard_id && entry.status == ReplicationStatus::Pending {
+                                    entry.status = ReplicationStatus::Completed;
+                                }
+                            }
                         },
                         Err(e) => {
                             let mut metrics_write = metrics.write().await;
                             metrics_write.failed_replications += 1;
                             warn!("Replication failed: {:?}", e);
+
+                            let mut log = replication_log.write().await;
+                            for entry in log.iter_mut() {
+                                if entry.shard_id == task.shard_id && entry.status == ReplicationStatus::Pending {
+                                    entry.status = ReplicationStatus::Failed;
+                                }
+                            }
                             
                             // 重试
                             if task.retry_count < task.max_retries {
@@ -353,7 +415,32 @@ impl ReplicationManager {
         Ok(metrics.clone())
     }
 
-    /// 停止复制管理器
+    pub async fn handle_node_failure(&self, failed_node_id: &str, _healthy_nodes: &[String]) -> Result<()> {
+        info!("Replication manager handling failure of node: {}", failed_node_id);
+
+        let mut log = self.replication_log.write().await;
+        for entry in log.iter_mut() {
+            if entry.status == ReplicationStatus::Pending {
+                entry.status = ReplicationStatus::Failed;
+            }
+        }
+        drop(log);
+
+        {
+            let rpc_manager = self.rpc_manager.read().await;
+            if let Some(ref rpc_mgr) = *rpc_manager {
+                rpc_mgr.unregister_node(failed_node_id).await;
+                info!("Unregistered RPC client for failed node: {}", failed_node_id);
+            }
+        }
+
+        let mut metrics = self.metrics.write().await;
+        metrics.failed_replications += 1;
+
+        info!("Replication manager completed failure handling for node: {}", failed_node_id);
+        Ok(())
+    }
+
     pub async fn stop(&self) -> Result<()> {
         let mut workers = self.replication_workers.write().await;
         for worker in workers.drain(..) {

@@ -29,6 +29,18 @@ impl Default for ShardConfig {
     }
 }
 
+impl ShardConfig {
+    /// 从YAML配置创建分片配置
+    pub fn from_yaml_config(yaml_config: &crate::config::ShardConfigYaml, replication_factor: u32) -> Self {
+        Self {
+            shard_count: yaml_config.count,
+            replication_factor,
+            enable_virtual_nodes: yaml_config.virtual_nodes > 0,
+            virtual_nodes_per_physical: yaml_config.virtual_nodes,
+        }
+    }
+}
+
 /// 分片
 #[derive(Debug, Clone)]
 pub struct Shard {
@@ -237,21 +249,27 @@ impl ShardManager {
         let failed_shards = self.get_node_shards(failed_node_id).await?;
         info!("Failed node {} was responsible for {} shards", failed_node_id, failed_shards.len());
         
+        if failed_shards.is_empty() {
+            info!("No shards to reassign for failed node: {}", failed_node_id);
+            return Ok(());
+        }
+        
         // 2. 重新分配这些分片
+        let mut reassigned_shards = 0;
+        let mut updated_shards = 0;
+        
         for shard_id in failed_shards {
             let mut shards_write = self.shards.write().await;
             if let Some(shard) = shards_write.get_mut(&shard_id) {
                 // 检查故障节点是否是主节点
                 if shard.primary_node == failed_node_id {
                     // 从健康节点中选择新的主节点
-                    let new_primary = healthy_nodes[0].clone();
+                    // 优化：选择负载最小的节点作为新主节点
+                    let new_primary = self.select_new_primary(healthy_nodes).await?;
                     
                     // 重新计算副本节点
                     let replication_factor = self.config.replication_factor as usize;
-                    let mut new_followers = Vec::new();
-                    for i in 1..replication_factor.min(healthy_nodes.len()) {
-                        new_followers.push(healthy_nodes[i].clone());
-                    }
+                    let mut new_followers = self.select_new_followers(&new_primary, healthy_nodes, replication_factor - 1).await?;
                     
                     // 更新分片信息
                     shard.primary_node = new_primary.clone();
@@ -260,23 +278,23 @@ impl ShardManager {
                     
                     info!("Reassigned shard {}: new primary {}, new followers: {:?}", 
                           shard_id, new_primary, new_followers);
+                    reassigned_shards += 1;
                 } else {
                     // 故障节点是副本节点，从副本列表中移除
+                    let old_follower_count = shard.follower_nodes.len();
                     shard.follower_nodes.retain(|node| node != failed_node_id);
                     
                     // 如果需要，添加新的副本节点
                     if shard.follower_nodes.len() < (self.config.replication_factor as usize - 1) {
-                        for node in healthy_nodes {
-                            if node != &shard.primary_node && !shard.follower_nodes.contains(node) {
-                                shard.follower_nodes.push(node.clone());
-                                if shard.follower_nodes.len() >= (self.config.replication_factor as usize - 1) {
-                                    break;
-                                }
-                            }
-                        }
+                        let needed = (self.config.replication_factor as usize - 1) - shard.follower_nodes.len();
+                        let new_followers = self.select_new_followers(&shard.primary_node, healthy_nodes, needed).await?;
+                        shard.follower_nodes.extend(new_followers);
                     }
                     
-                    info!("Updated shard {} followers: {:?}", shard_id, shard.follower_nodes);
+                    if shard.follower_nodes.len() != old_follower_count {
+                        info!("Updated shard {} followers: {:?}", shard_id, shard.follower_nodes);
+                        updated_shards += 1;
+                    }
                 }
             }
         }
@@ -295,7 +313,82 @@ impl ShardManager {
             }
         }
         
-        info!("Completed failover for node: {}", failed_node_id);
+        // 4. 更新虚拟节点映射
+        self.update_virtual_nodes(healthy_nodes).await?;
+        
+        info!("Completed failover for node: {}, reassigned {} shards, updated {} shards", 
+              failed_node_id, reassigned_shards, updated_shards);
+        Ok(())
+    }
+    
+    /// 选择新的主节点
+    async fn select_new_primary(&self, healthy_nodes: &[String]) -> Result<String> {
+        // 优化：选择分片数量最少的节点作为新主节点
+        let node_shards = self.node_shards.read().await;
+        
+        let mut best_node = healthy_nodes[0].clone();
+        let mut min_shards = node_shards.get(&best_node).map(|shards| shards.len()).unwrap_or(0);
+        
+        for node in healthy_nodes {
+            let shard_count = node_shards.get(node).map(|shards| shards.len()).unwrap_or(0);
+            if shard_count < min_shards {
+                min_shards = shard_count;
+                best_node = node.clone();
+            }
+        }
+        
+        Ok(best_node)
+    }
+    
+    /// 选择新的副本节点
+    async fn select_new_followers(&self, primary_node: &str, healthy_nodes: &[String], count: usize) -> Result<Vec<String>> {
+        // 优化：选择分片数量最少的节点作为副本节点
+        let node_shards = self.node_shards.read().await;
+        
+        let mut candidates: Vec<(String, usize)> = healthy_nodes
+            .iter()
+            .filter(|&node| node != primary_node)
+            .map(|node| {
+                let shard_count = node_shards.get(node).map(|shards| shards.len()).unwrap_or(0);
+                (node.clone(), shard_count)
+            })
+            .collect();
+        
+        // 按分片数量排序
+        candidates.sort_by(|a, b| a.1.cmp(&b.1));
+        
+        // 选择前count个节点
+        let mut followers = Vec::new();
+        for (node, _) in candidates.into_iter().take(count) {
+            followers.push(node);
+        }
+        
+        Ok(followers)
+    }
+    
+    /// 更新虚拟节点映射
+    async fn update_virtual_nodes(&self, healthy_nodes: &[String]) -> Result<()> {
+        if !self.config.enable_virtual_nodes {
+            return Ok(());
+        }
+        
+        let mut virtual_nodes = self.virtual_nodes.write().await;
+        
+        // 清除所有虚拟节点
+        virtual_nodes.clear();
+        
+        // 为每个健康节点添加虚拟节点
+        for node in healthy_nodes {
+            for i in 0..self.config.virtual_nodes_per_physical {
+                let hash = self.hash_virtual_node(node, i);
+                virtual_nodes.push((hash, node.clone()));
+            }
+        }
+        
+        // 按哈希值排序
+        virtual_nodes.sort_by_key(|(hash, _)| *hash);
+        
+        debug!("Updated virtual nodes for {} healthy nodes", healthy_nodes.len());
         Ok(())
     }
 
