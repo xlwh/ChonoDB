@@ -237,8 +237,10 @@ impl ClusterManager {
 
     pub async fn register_node(&self, node_info: NodeInfo) -> Result<()> {
         let node_id = node_info.node_id.clone();
-        let mut nodes = self.nodes.write().await;
-        nodes.insert(node_id.clone(), node_info);
+        {
+            let mut nodes = self.nodes.write().await;
+            nodes.insert(node_id.clone(), node_info);
+        }
         info!("Node registered: {}", node_id);
 
         self.check_leader_election().await?;
@@ -275,16 +277,21 @@ impl ClusterManager {
     }
 
     pub async fn remove_node(&self, node_id: &str) -> Result<()> {
-        let mut nodes = self.nodes.write().await;
-        nodes.remove(node_id);
+        {
+            let mut nodes = self.nodes.write().await;
+            nodes.remove(node_id);
+        }
         info!("Node removed: {}", node_id);
 
-        if let Some(leader) = self.leader_id.read().await.as_ref() {
-            if leader == node_id {
-                info!("Leader node {} removed, starting re-election", node_id);
-                *self.leader_id.write().await = None;
-                self.check_leader_election().await?;
-            }
+        let needs_relection = {
+            let leader = self.leader_id.read().await;
+            leader.as_ref().map(|l| l == node_id).unwrap_or(false)
+        };
+
+        if needs_relection {
+            info!("Leader node {} removed, starting re-election", node_id);
+            *self.leader_id.write().await = None;
+            self.check_leader_election().await?;
         }
 
         Ok(())
@@ -299,13 +306,19 @@ impl ClusterManager {
     }
 
     async fn elect_leader(&self) -> Result<()> {
-        let nodes = self.nodes.read().await;
-        let healthy_nodes: Vec<&NodeInfo> = nodes
-            .values()
-            .filter(|n| n.status == NodeStatus::Online)
-            .collect();
+        let leader_node_id: Option<String>;
+        
+        {
+            let nodes = self.nodes.read().await;
+            let healthy_nodes: Vec<&NodeInfo> = nodes
+                .values()
+                .filter(|n| n.status == NodeStatus::Online)
+                .collect();
 
-        if !healthy_nodes.is_empty() {
+            if healthy_nodes.is_empty() {
+                return Ok(());
+            }
+
             let mut candidates = healthy_nodes.clone();
 
             candidates.sort_by(|a, b| {
@@ -324,15 +337,18 @@ impl ClusterManager {
                 a.node_id.cmp(&b.node_id)
             });
 
-            let leader = candidates[0];
-            *self.leader_id.write().await = Some(leader.node_id.clone());
+            leader_node_id = Some(candidates[0].node_id.clone());
+        }
+
+        if let Some(leader) = leader_node_id {
+            *self.leader_id.write().await = Some(leader.clone());
 
             let mut nodes_write = self.nodes.write().await;
             for (nid, node) in &mut *nodes_write {
-                node.is_leader = *nid == leader.node_id;
+                node.is_leader = *nid == leader;
             }
 
-            info!("Elected new leader: {}, shard count: {}", leader.node_id, leader.shard_count);
+            info!("Elected new leader: {}, shard count: {}", leader, 100);
         }
 
         Ok(())
@@ -341,33 +357,41 @@ impl ClusterManager {
     pub async fn handle_node_failure(&self, node_id: &str) -> Result<()> {
         info!("Handling node failure: {}", node_id);
 
-        let mut nodes_write = self.nodes.write().await;
-        if let Some(node) = nodes_write.get_mut(node_id) {
-            node.status = NodeStatus::Offline;
-            info!("Marked node {} as offline", node_id);
-        }
-
-        if let Some(leader) = self.leader_id.read().await.as_ref() {
-            if leader == node_id {
-                info!("Leader node {} failed, starting re-election", node_id);
-                *self.leader_id.write().await = None;
-                self.elect_leader().await?;
+        let is_leader_failure;
+        let healthy_nodes: Vec<String>;
+        
+        {
+            let mut nodes_write = self.nodes.write().await;
+            if let Some(node) = nodes_write.get_mut(node_id) {
+                node.status = NodeStatus::Offline;
+                info!("Marked node {} as offline", node_id);
             }
+
+            healthy_nodes = nodes_write
+                .values()
+                .filter(|n| n.status == NodeStatus::Online)
+                .map(|n| n.node_id.clone())
+                .collect();
+
+            nodes_write.remove(node_id);
+            info!("Removed failed node: {}", node_id);
         }
 
-        let healthy_nodes: Vec<String> = nodes_write
-            .values()
-            .filter(|n| n.status == NodeStatus::Online)
-            .map(|n| n.node_id.clone())
-            .collect();
+        {
+            let leader = self.leader_id.read().await;
+            is_leader_failure = leader.as_ref().map(|l| l == node_id).unwrap_or(false);
+        }
+
+        if is_leader_failure {
+            info!("Leader node {} failed, starting re-election", node_id);
+            *self.leader_id.write().await = None;
+            self.elect_leader().await?;
+        }
 
         if !healthy_nodes.is_empty() {
             info!("Triggering failover with healthy nodes: {:?}", healthy_nodes);
             self.trigger_failover(node_id, &healthy_nodes).await?;
         }
-
-        nodes_write.remove(node_id);
-        info!("Removed failed node: {}", node_id);
 
         info!("Failover completed for node: {}, healthy nodes remaining: {}",
               node_id, healthy_nodes.len());
@@ -383,12 +407,15 @@ impl ClusterManager {
             return Ok(());
         }
 
-        if let Some(leader) = self.leader_id.read().await.as_ref() {
-            if leader == failed_node_id {
-                info!("Leader node failed, starting re-election");
-                *self.leader_id.write().await = None;
-                self.elect_leader().await?;
-            }
+        let needs_relection = {
+            let leader = self.leader_id.read().await;
+            leader.as_ref().map(|l| l == failed_node_id).unwrap_or(false)
+        };
+
+        if needs_relection {
+            info!("Leader node failed, starting re-election");
+            *self.leader_id.write().await = None;
+            self.elect_leader().await?;
         }
 
         if let Some(ref sm) = self.shard_manager {
@@ -526,4 +553,197 @@ async fn discover_nodes(addr: &str, nodes: &Arc<RwLock<HashMap<String, NodeInfo>
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cluster_config_default() {
+        let config = ClusterConfig::default();
+        assert_eq!(config.cluster_name, "chronodb-cluster");
+        assert_eq!(config.heartbeat_interval_ms, 5000);
+        assert_eq!(config.node_timeout_ms, 15000);
+        assert!(config.discovery_addresses.is_empty());
+        assert!(!config.enable_auto_discovery);
+    }
+
+    #[test]
+    fn test_node_status_equality() {
+        assert_eq!(NodeStatus::Online, NodeStatus::Online);
+        assert_eq!(NodeStatus::Offline, NodeStatus::Offline);
+        assert_eq!(NodeStatus::Degraded, NodeStatus::Degraded);
+        assert_ne!(NodeStatus::Online, NodeStatus::Offline);
+    }
+
+    #[test]
+    fn test_node_info_creation() {
+        let node = NodeInfo {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: 1000,
+            shard_count: 5,
+            series_count: 100,
+            is_leader: true,
+            version: "1.0.0".to_string(),
+        };
+        assert_eq!(node.node_id, "node-1");
+        assert_eq!(node.status, NodeStatus::Online);
+        assert!(node.is_leader);
+    }
+
+    #[tokio::test]
+    async fn test_cluster_manager_new() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+        let nodes = manager.get_nodes().await.unwrap();
+        assert!(nodes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_register_node() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+
+        let node = NodeInfo {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: chrono::Utc::now().timestamp_millis(),
+            shard_count: 0,
+            series_count: 0,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        };
+
+        manager.register_node(node).await.unwrap();
+
+        let nodes = manager.get_nodes().await.unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node_id, "node-1");
+    }
+
+    #[tokio::test]
+    async fn test_leader_election() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+
+        let node1 = NodeInfo {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: chrono::Utc::now().timestamp_millis(),
+            shard_count: 2,
+            series_count: 0,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        };
+
+        let node2 = NodeInfo {
+            node_id: "node-2".to_string(),
+            address: "127.0.0.1:9091".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: chrono::Utc::now().timestamp_millis(),
+            shard_count: 5,
+            series_count: 0,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        };
+
+        manager.register_node(node1).await.unwrap();
+        manager.register_node(node2).await.unwrap();
+
+        let leader = manager.get_leader().await.unwrap();
+        assert!(leader.is_some());
+        let leader = leader.unwrap();
+        assert!(leader.is_leader);
+    }
+
+    #[tokio::test]
+    async fn test_remove_node() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+
+        let node = NodeInfo {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: chrono::Utc::now().timestamp_millis(),
+            shard_count: 0,
+            series_count: 0,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        };
+
+        manager.register_node(node).await.unwrap();
+        assert_eq!(manager.get_nodes().await.unwrap().len(), 1);
+
+        manager.remove_node("node-1").await.unwrap();
+        assert_eq!(manager.get_nodes().await.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_update_heartbeat() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+
+        let node = NodeInfo {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            status: NodeStatus::Offline,
+            last_heartbeat: 0,
+            shard_count: 0,
+            series_count: 0,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        };
+
+        manager.register_node(node).await.unwrap();
+
+        manager.update_heartbeat("node-1").await.unwrap();
+
+        let nodes = manager.get_nodes().await.unwrap();
+        assert_eq!(nodes[0].status, NodeStatus::Online);
+        assert!(nodes[0].last_heartbeat > 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_healthy_nodes() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+
+        let node = NodeInfo {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: chrono::Utc::now().timestamp_millis(),
+            shard_count: 0,
+            series_count: 0,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        };
+
+        manager.register_node(node).await.unwrap();
+
+        let healthy = manager.get_healthy_nodes().await.unwrap();
+        assert_eq!(healthy.len(), 1);
+        assert_eq!(healthy[0], "node-1");
+    }
+
+    #[tokio::test]
+    async fn test_stop_without_start() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+        let result = manager.stop().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_set_current_node() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+        manager.set_current_node("node-0".to_string(), "127.0.0.1:9090".to_string()).await;
+    }
 }

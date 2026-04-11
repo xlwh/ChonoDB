@@ -11,7 +11,13 @@ impl DeltaEncoder {
 
     pub fn encode(&mut self, value: i64) -> Result<Vec<u8>> {
         let delta = match self.last_value {
-            Some(last) => value - last,
+            Some(last) => {
+                let (result, overflow) = value.overflowing_sub(last);
+                if overflow {
+                    return Err(Error::Overflow("Delta encoding overflow".to_string()));
+                }
+                result
+            }
             None => value,
         };
         self.last_value = Some(value);
@@ -82,12 +88,24 @@ impl DeltaOfDeltaEncoder {
 
     pub fn encode(&mut self, value: i64) -> Result<Vec<u8>> {
         let delta = match self.last_value {
-            Some(last) => value - last,
+            Some(last) => {
+                let (result, overflow) = value.overflowing_sub(last);
+                if overflow {
+                    return Err(Error::Overflow("Delta encoding overflow".to_string()));
+                }
+                result
+            }
             None => value,
         };
         
         let dod = match self.last_delta {
-            Some(last_delta) => delta - last_delta,
+            Some(last_delta) => {
+                let (result, overflow) = delta.overflowing_sub(last_delta);
+                if overflow {
+                    return Err(Error::Overflow("Delta of delta encoding overflow".to_string()));
+                }
+                result
+            }
             None => delta,
         };
         

@@ -212,3 +212,89 @@ impl QueryRouter {
         Ok(routes)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_coordinator_config_default() {
+        let config = CoordinatorConfig::default();
+        assert_eq!(config.address, "127.0.0.1:9091");
+        assert_eq!(config.heartbeat_interval_ms, 5000);
+        assert_eq!(config.node_timeout_ms, 15000);
+    }
+
+    #[tokio::test]
+    async fn test_coordinator_new() {
+        let config = CoordinatorConfig::default();
+        let coordinator = Coordinator::new(config);
+        let healthy = coordinator.get_healthy_nodes().await.unwrap();
+        assert!(healthy.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_register_and_get_healthy_nodes() {
+        let config = CoordinatorConfig::default();
+        let coordinator = Coordinator::new(config);
+
+        coordinator.register_node("node-1".to_string(), "127.0.0.1:9090".to_string()).await.unwrap();
+
+        let healthy = coordinator.get_healthy_nodes().await.unwrap();
+        assert_eq!(healthy.len(), 1);
+        assert_eq!(healthy[0], "node-1");
+    }
+
+    #[tokio::test]
+    async fn test_register_multiple_nodes() {
+        let config = CoordinatorConfig::default();
+        let coordinator = Coordinator::new(config);
+
+        coordinator.register_node("node-1".to_string(), "127.0.0.1:9090".to_string()).await.unwrap();
+        coordinator.register_node("node-2".to_string(), "127.0.0.1:9091".to_string()).await.unwrap();
+
+        let healthy = coordinator.get_healthy_nodes().await.unwrap();
+        assert_eq!(healthy.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_update_heartbeat() {
+        let config = CoordinatorConfig::default();
+        let coordinator = Coordinator::new(config);
+
+        coordinator.register_node("node-1".to_string(), "127.0.0.1:9090".to_string()).await.unwrap();
+        coordinator.update_heartbeat("node-1").await.unwrap();
+
+        let healthy = coordinator.get_healthy_nodes().await.unwrap();
+        assert_eq!(healthy.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_update_heartbeat_nonexistent() {
+        let config = CoordinatorConfig::default();
+        let coordinator = Coordinator::new(config);
+
+        let result = coordinator.update_heartbeat("nonexistent").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_stop_without_start() {
+        let config = CoordinatorConfig::default();
+        let coordinator = Coordinator::new(config);
+        let result = coordinator.stop().await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_node_status_creation() {
+        let status = NodeStatus {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            last_heartbeat: 1000,
+            is_healthy: true,
+        };
+        assert_eq!(status.node_id, "node-1");
+        assert!(status.is_healthy);
+    }
+}

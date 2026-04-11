@@ -58,3 +58,100 @@ impl Wal {
         &self.path
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Label, Sample};
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_wal_new() {
+        let temp_dir = tempdir().unwrap();
+        let wal_path = temp_dir.path().join("wal");
+        let wal = Wal::new(&wal_path).unwrap();
+        assert_eq!(wal.path(), wal_path.as_path());
+    }
+
+    #[test]
+    fn test_wal_log_write() {
+        let temp_dir = tempdir().unwrap();
+        let wal_path = temp_dir.path().join("wal");
+        let wal = Wal::new(&wal_path).unwrap();
+
+        let labels = vec![Label::new("job", "test")];
+        let samples = vec![Sample::new(1000, 42.0)];
+
+        let result = wal.log_write(1, &labels, &samples);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_wal_log_delete() {
+        let temp_dir = tempdir().unwrap();
+        let wal_path = temp_dir.path().join("wal");
+        let wal = Wal::new(&wal_path).unwrap();
+
+        let result = wal.log_delete(1);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_wal_sync() {
+        let temp_dir = tempdir().unwrap();
+        let wal_path = temp_dir.path().join("wal");
+        let wal = Wal::new(&wal_path).unwrap();
+
+        let labels = vec![Label::new("job", "test")];
+        let samples = vec![Sample::new(1000, 42.0)];
+        wal.log_write(1, &labels, &samples).unwrap();
+
+        let result = wal.sync();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_wal_rotate() {
+        let temp_dir = tempdir().unwrap();
+        let wal_path = temp_dir.path().join("wal");
+        let wal = Wal::new(&wal_path).unwrap();
+
+        let labels = vec![Label::new("job", "test")];
+        let samples = vec![Sample::new(1000, 42.0)];
+        wal.log_write(1, &labels, &samples).unwrap();
+
+        let result = wal.rotate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_wal_reader() {
+        let temp_dir = tempdir().unwrap();
+        let wal_path = temp_dir.path().join("wal");
+        let wal = Wal::new(&wal_path).unwrap();
+
+        let labels = vec![Label::new("job", "test")];
+        let samples = vec![Sample::new(1000, 42.0)];
+        wal.log_write(1, &labels, &samples).unwrap();
+        wal.sync().unwrap();
+
+        let reader = wal.reader();
+        assert!(reader.is_ok());
+    }
+
+    #[test]
+    fn test_wal_multiple_writes() {
+        let temp_dir = tempdir().unwrap();
+        let wal_path = temp_dir.path().join("wal");
+        let wal = Wal::new(&wal_path).unwrap();
+
+        let labels = vec![Label::new("job", "test")];
+
+        for i in 0..10 {
+            let samples = vec![Sample::new(1000 + i, i as f64)];
+            wal.log_write(i as u64, &labels, &samples).unwrap();
+        }
+
+        wal.sync().unwrap();
+    }
+}

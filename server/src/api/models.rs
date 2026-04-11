@@ -128,3 +128,95 @@ pub struct OpenTSDBErrorDetail {
     pub code: u16,
     pub message: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_query_request_deserialization() {
+        let json = r#"{"query":"up","time":1234567890}"#;
+        let req: QueryRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.query, "up");
+        assert_eq!(req.time, Some(1234567890));
+    }
+
+    #[test]
+    fn test_query_range_request_deserialization() {
+        let json = r#"{"query":"up","start":1000,"end":2000,"step":15}"#;
+        let req: QueryRangeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.query, "up");
+        assert_eq!(req.start, 1000);
+        assert_eq!(req.end, 2000);
+        assert_eq!(req.step, 15);
+    }
+
+    #[test]
+    fn test_series_request_deserialization() {
+        let json = r#"{"match[]":["up","down"],"start":1000,"end":2000}"#;
+        let req: SeriesRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.matchers.len(), 2);
+    }
+
+    #[test]
+    fn test_opentsdb_put_request_deserialization() {
+        let json = r#"{"metric":"sys.cpu","timestamp":1234567890,"value":42.5,"tags":{"host":"server1"}}"#;
+        let req: OpenTSDBPutRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.metric, "sys.cpu");
+        assert_eq!(req.tags.len(), 1);
+    }
+
+    #[test]
+    fn test_target_info_serialization() {
+        let info = TargetInfo {
+            discovered_labels: HashMap::new(),
+            labels: HashMap::new(),
+            scrape_pool: "default".to_string(),
+            scrape_url: "http://localhost:9090/metrics".to_string(),
+            last_error: None,
+            last_scrape: Some(1000),
+            health: "up".to_string(),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("scrape_url"));
+    }
+
+    #[test]
+    fn test_rule_info_serialization() {
+        let info = RuleInfo {
+            name: "HighCPU".to_string(),
+            query: "cpu > 90".to_string(),
+            duration: 300,
+            labels: HashMap::new(),
+            health: "ok".to_string(),
+            evaluation_time: 0.5,
+            last_evaluation: 1000,
+            alerts: None,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("HighCPU"));
+    }
+
+    #[test]
+    fn test_opentsdb_put_summary_serialization() {
+        let summary = OpenTSDBPutSummary {
+            failed: 1,
+            success: 9,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"failed\":1"));
+        assert!(json.contains("\"success\":9"));
+    }
+
+    #[test]
+    fn test_opentsdb_error_response_serialization() {
+        let resp = OpenTSDBErrorResponse {
+            error: OpenTSDBErrorDetail {
+                code: 400,
+                message: "Bad request".to_string(),
+            },
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"code\":400"));
+    }
+}

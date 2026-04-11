@@ -262,6 +262,7 @@ impl ServerConfig {
     }
 }
 
+<<<<<<< HEAD
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreAggregationConfig {
     /// 自动创建配置
@@ -426,5 +427,90 @@ impl Default for DownsamplingConfig {
                 },
             ],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_server_config_default() {
+        let config = ServerConfig::default();
+        assert_eq!(config.listen_address, "0.0.0.0");
+        assert_eq!(config.port, 9090);
+        assert_eq!(config.storage.mode, "standalone");
+        assert_eq!(config.storage.backend, "local");
+        assert_eq!(config.query.max_concurrent, 100);
+        assert_eq!(config.query.timeout, 120);
+        assert!(config.query.enable_vectorized);
+        assert!(config.query.enable_parallel);
+        assert!(config.query.enable_auto_downsampling);
+        assert_eq!(config.rules.evaluation_interval, 60);
+        assert_eq!(config.targets.scrape_interval, 60);
+        assert_eq!(config.compression.time_column.algorithm, "zstd");
+        assert_eq!(config.compression.value_column.algorithm, "zstd");
+        assert!(config.compression.value_column.use_prediction);
+        assert_eq!(config.log.level, "info");
+    }
+
+    #[test]
+    fn test_server_config_serialization() {
+        let config = ServerConfig::default();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(yaml.contains("listen_address"));
+        assert!(yaml.contains("port"));
+    }
+
+    #[test]
+    fn test_server_config_roundtrip() {
+        let config = ServerConfig::default();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let deserialized: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(deserialized.listen_address, config.listen_address);
+        assert_eq!(deserialized.port, config.port);
+        assert_eq!(deserialized.query.max_concurrent, config.query.max_concurrent);
+    }
+
+    #[test]
+    fn test_storage_config() {
+        let config = ServerConfig::default();
+        assert_eq!(config.storage.mode, "standalone");
+        assert_eq!(config.storage.backend, "local");
+    }
+
+    #[test]
+    fn test_query_config() {
+        let config = ServerConfig::default();
+        assert_eq!(config.query.max_samples, 50_000_000);
+        assert_eq!(config.query.downsample_policy, "auto");
+        assert_eq!(config.query.query_cache_ttl, 300);
+    }
+
+    #[test]
+    fn test_rules_config() {
+        let config = ServerConfig::default();
+        assert!(config.rules.rule_files.is_empty());
+        assert_eq!(config.rules.alert_send_interval, 60);
+    }
+
+    #[test]
+    fn test_compression_config() {
+        let config = ServerConfig::default();
+        assert_eq!(config.compression.label_column.algorithm, "dictionary");
+        assert_eq!(config.compression.time_column.level, 3);
+    }
+
+    #[test]
+    fn test_config_save_and_load() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+
+        let config = ServerConfig::default();
+        config.save_to_file(&config_path).unwrap();
+
+        let loaded = ServerConfig::from_file(&config_path).unwrap();
+        assert_eq!(loaded.port, 9090);
+        assert_eq!(loaded.listen_address, "0.0.0.0");
     }
 }

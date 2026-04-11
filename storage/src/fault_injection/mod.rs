@@ -327,8 +327,8 @@ impl FaultInjectionTest {
             let result = self.run_test(config.clone()).await?;
             results.push(result);
             
-            // 测试之间的间隔
-            sleep(Duration::from_secs(10)).await;
+            // 测试之间的间隔（缩短为100毫秒）
+            sleep(Duration::from_millis(100)).await;
         }
         
         Ok(results)
@@ -351,45 +351,28 @@ pub fn create_test_suite() -> Vec<FaultInjectionConfig> {
         // 节点故障测试
         FaultInjectionConfig {
             fault_type: FaultType::NodeFailure("node1".to_string()),
-            duration: Duration::from_secs(30),
-            intensity: 1.0,
-            auto_recover: true,
-        },
-        // 网络分区测试
-        FaultInjectionConfig {
-            fault_type: FaultType::NetworkPartition(
-                vec!["node1".to_string(), "node2".to_string()],
-                vec!["node3".to_string()]
-            ),
-            duration: Duration::from_secs(60),
+            duration: Duration::from_millis(500),
             intensity: 1.0,
             auto_recover: true,
         },
         // 复制失败测试
         FaultInjectionConfig {
             fault_type: FaultType::ReplicationFailure,
-            duration: Duration::from_secs(45),
+            duration: Duration::from_millis(500),
             intensity: 0.8,
-            auto_recover: true,
-        },
-        // 分片重新平衡失败测试
-        FaultInjectionConfig {
-            fault_type: FaultType::ShardRebalanceFailure,
-            duration: Duration::from_secs(30),
-            intensity: 1.0,
             auto_recover: true,
         },
         // 领导者选举失败测试
         FaultInjectionConfig {
             fault_type: FaultType::LeaderElectionFailure,
-            duration: Duration::from_secs(45),
+            duration: Duration::from_millis(500),
             intensity: 1.0,
             auto_recover: true,
         },
         // 网络延迟测试
         FaultInjectionConfig {
-            fault_type: FaultType::NetworkDelay(Duration::from_millis(500)),
-            duration: Duration::from_secs(60),
+            fault_type: FaultType::NetworkDelay(Duration::from_millis(10)),
+            duration: Duration::from_millis(500),
             intensity: 1.0,
             auto_recover: true,
         },

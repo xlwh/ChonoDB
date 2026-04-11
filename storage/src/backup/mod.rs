@@ -553,3 +553,110 @@ impl BackupManager {
         Ok(handle)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_backup_config_default() {
+        let config = BackupConfig::default();
+        assert_eq!(config.backup_dir, "./backups");
+        assert_eq!(config.backup_type, "full");
+        assert_eq!(config.backup_interval_secs, 86400);
+        assert_eq!(config.retention_days, 7);
+        assert_eq!(config.storage_backend, "local");
+        assert!(config.enable_verification);
+        assert_eq!(config.parallelism, 4);
+    }
+
+    #[test]
+    fn test_backup_metadata_serialization() {
+        let metadata = BackupMetadata {
+            backup_id: "backup_123".to_string(),
+            backup_type: "full".to_string(),
+            timestamp: Utc::now(),
+            source_dir: "/data".to_string(),
+            storage_backend: "local".to_string(),
+            files_count: 10,
+            total_size: 1024,
+            previous_backup_id: None,
+            verification_status: None,
+        };
+
+        let json = serde_json::to_string(&metadata).unwrap();
+        let deserialized: BackupMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.backup_id, "backup_123");
+        assert_eq!(deserialized.backup_type, "full");
+        assert_eq!(deserialized.files_count, 10);
+    }
+
+    #[test]
+    fn test_verification_status_serialization() {
+        let status = VerificationStatus {
+            verified_at: Utc::now(),
+            success: true,
+            errors: vec![],
+        };
+
+        let json = serde_json::to_string(&status).unwrap();
+        let deserialized: VerificationStatus = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.success);
+        assert!(deserialized.errors.is_empty());
+    }
+
+    #[test]
+    fn test_verification_status_with_errors() {
+        let status = VerificationStatus {
+            verified_at: Utc::now(),
+            success: false,
+            errors: vec!["Missing directory: wal".to_string()],
+        };
+
+        let json = serde_json::to_string(&status).unwrap();
+        let deserialized: VerificationStatus = serde_json::from_str(&json).unwrap();
+        assert!(!deserialized.success);
+        assert_eq!(deserialized.errors.len(), 1);
+    }
+
+    #[test]
+    fn test_s3_config_serialization() {
+        let config = S3Config {
+            bucket: "my-bucket".to_string(),
+            region: "us-east-1".to_string(),
+            access_key: "key".to_string(),
+            secret_key: "secret".to_string(),
+            endpoint: Some("http://localhost:9000".to_string()),
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: S3Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.bucket, "my-bucket");
+    }
+
+    #[test]
+    fn test_gcs_config_serialization() {
+        let config = GCSConfig {
+            bucket: "gcs-bucket".to_string(),
+            service_account_key: "key.json".to_string(),
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: GCSConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.bucket, "gcs-bucket");
+    }
+
+    #[test]
+    fn test_minio_config_serialization() {
+        let config = MinIOConfig {
+            endpoint: "http://localhost:9000".to_string(),
+            bucket: "minio-bucket".to_string(),
+            access_key: "key".to_string(),
+            secret_key: "secret".to_string(),
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: MinIOConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.bucket, "minio-bucket");
+    }
+}

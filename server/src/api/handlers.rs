@@ -827,3 +827,92 @@ pub async fn handle_build_info() -> Json<ApiResponse<BuildInfo>> {
 
     Json(ApiResponse::success(info))
 }
+
+/// 存活检查（简化版）
+pub async fn handle_live() -> &'static str {
+    "OK\n"
+}
+
+/// 就绪检查（简化版）
+pub async fn handle_ready_check() -> &'static str {
+    "OK\n"
+}
+
+/// 状态配置
+pub async fn handle_status_config(
+    State(state): State<Arc<ServerState>>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let config = serde_json::json!({
+        "target_groups": [],
+        "scrape_configs": [],
+        "alerting": {},
+        "rule_files": [],
+        "remote_write": [],
+        "remote_read": [],
+    });
+
+    Json(ApiResponse::success(config))
+}
+
+/// 状态标志
+pub async fn handle_status_flags() -> Json<ApiResponse<serde_json::Value>> {
+    let flags = serde_json::json!({
+        "alertmanager.notification-queue-capacity": 10000,
+        "log.level": "info",
+        "storage.tsdb.retention.time": "15d",
+        "storage.tsdb.wal-compression": true,
+    });
+
+    Json(ApiResponse::success(flags))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_label_matchers_metric_only() {
+        let matchers = parse_label_matchers("http_requests_total");
+        assert_eq!(matchers.len(), 1);
+        assert_eq!(matchers[0], ("__name__".to_string(), "http_requests_total".to_string()));
+    }
+
+    #[test]
+    fn test_parse_label_matchers_with_labels() {
+        let matchers = parse_label_matchers("http_requests_total{method=\"GET\",status=\"200\"}");
+        assert!(matchers.contains(&("__name__".to_string(), "http_requests_total".to_string())));
+        assert!(matchers.contains(&("method".to_string(), "GET".to_string())));
+        assert!(matchers.contains(&("status".to_string(), "200".to_string())));
+    }
+
+    #[test]
+    fn test_parse_label_matchers_with_aggregation() {
+        let matchers = parse_label_matchers("sum(http_requests_total{method=\"GET\"})");
+        assert!(matchers.contains(&("__name__".to_string(), "http_requests_total".to_string())));
+        assert!(matchers.contains(&("method".to_string(), "GET".to_string())));
+    }
+
+    #[test]
+    fn test_parse_label_matchers_empty() {
+        let matchers = parse_label_matchers("");
+        assert!(matchers.is_empty());
+    }
+
+    #[test]
+    fn test_parse_label_matchers_single_label() {
+        let matchers = parse_label_matchers("metric{job=\"test\"}");
+        assert_eq!(matchers.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_label_matchers_label_with_single_quotes() {
+        let matchers = parse_label_matchers("metric{env='prod'}");
+        assert!(matchers.contains(&("env".to_string(), "prod".to_string())));
+    }
+
+    #[test]
+    fn test_parse_label_matchers_whitespace_handling() {
+        let matchers = parse_label_matchers("  http_requests_total  ");
+        assert!(matchers.contains(&("__name__".to_string(), "http_requests_total".to_string())));
+    }
+}

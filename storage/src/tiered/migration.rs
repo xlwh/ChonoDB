@@ -47,3 +47,50 @@ impl MigrationHandle {
         info!("Migration manager stopped");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_migration_task() {
+        let task = MigrationTask {
+            series_id: 42,
+            source_tier: "hot".to_string(),
+            target_tier: "cold".to_string(),
+            timestamp: 1000,
+        };
+        assert_eq!(task.series_id, 42);
+        assert_eq!(task.source_tier, "hot");
+        assert_eq!(task.target_tier, "cold");
+        assert_eq!(task.timestamp, 1000);
+    }
+
+    #[tokio::test]
+    async fn test_migration_manager_new() {
+        let (manager, _handle) = MigrationManager::new(4);
+        let task = MigrationTask {
+            series_id: 1,
+            source_tier: "hot".to_string(),
+            target_tier: "cold".to_string(),
+            timestamp: 0,
+        };
+        let result = manager.submit(task).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_migration_manager_submit_multiple() {
+        let (manager, _handle) = MigrationManager::new(4);
+
+        for i in 0..5 {
+            let task = MigrationTask {
+                series_id: i,
+                source_tier: "hot".to_string(),
+                target_tier: "warm".to_string(),
+                timestamp: i as i64,
+            };
+            manager.submit(task).await.unwrap();
+        }
+    }
+}

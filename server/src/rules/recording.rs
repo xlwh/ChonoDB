@@ -106,3 +106,114 @@ impl Default for RecordingManager {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_recording_rule_creation() {
+        let rule = RecordingRule {
+            name: "job:http_requests:rate5m".to_string(),
+            expr: "rate(http_requests_total[5m])".to_string(),
+            labels: HashMap::new(),
+        };
+        assert_eq!(rule.name, "job:http_requests:rate5m");
+        assert_eq!(rule.expr, "rate(http_requests_total[5m])");
+    }
+
+    #[test]
+    fn test_recording_rule_with_labels() {
+        let mut labels = HashMap::new();
+        labels.insert("team".to_string(), "monitoring".to_string());
+
+        let rule = RecordingRule {
+            name: "custom:metric".to_string(),
+            expr: "up".to_string(),
+            labels,
+        };
+        assert_eq!(rule.labels.len(), 1);
+        assert_eq!(rule.labels.get("team").unwrap(), "monitoring");
+    }
+
+    #[test]
+    fn test_recording_manager_new() {
+        let manager = RecordingManager::new();
+        assert_eq!(manager.get_rule_count(), 0);
+        assert!(manager.get_rules().is_empty());
+    }
+
+    #[test]
+    fn test_recording_manager_default() {
+        let manager = RecordingManager::default();
+        assert_eq!(manager.get_rule_count(), 0);
+    }
+
+    #[test]
+    fn test_add_rule() {
+        let mut manager = RecordingManager::new();
+
+        let rule = RecordingRule {
+            name: "test:metric".to_string(),
+            expr: "up".to_string(),
+            labels: HashMap::new(),
+        };
+
+        manager.add_rule(rule);
+        assert_eq!(manager.get_rule_count(), 1);
+    }
+
+    #[test]
+    fn test_add_multiple_rules() {
+        let mut manager = RecordingManager::new();
+
+        for i in 0..5 {
+            let rule = RecordingRule {
+                name: format!("rule:{}", i),
+                expr: "up".to_string(),
+                labels: HashMap::new(),
+            };
+            manager.add_rule(rule);
+        }
+
+        assert_eq!(manager.get_rule_count(), 5);
+    }
+
+    #[test]
+    fn test_get_rules() {
+        let mut manager = RecordingManager::new();
+
+        let rule1 = RecordingRule {
+            name: "rule1".to_string(),
+            expr: "up".to_string(),
+            labels: HashMap::new(),
+        };
+        let rule2 = RecordingRule {
+            name: "rule2".to_string(),
+            expr: "down".to_string(),
+            labels: HashMap::new(),
+        };
+
+        manager.add_rule(rule1);
+        manager.add_rule(rule2);
+
+        let rules = manager.get_rules();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].name, "rule1");
+        assert_eq!(rules[1].name, "rule2");
+    }
+
+    #[test]
+    fn test_recording_rule_serialization() {
+        let rule = RecordingRule {
+            name: "test:metric".to_string(),
+            expr: "rate(http_requests[5m])".to_string(),
+            labels: HashMap::new(),
+        };
+
+        let json = serde_json::to_string(&rule).unwrap();
+        let deserialized: RecordingRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.name, "test:metric");
+        assert_eq!(deserialized.expr, "rate(http_requests[5m])");
+    }
+}
