@@ -31,10 +31,12 @@ mod humantime_serde {
 pub mod alerting;
 pub mod recording;
 pub mod evaluator;
+pub mod pre_aggregation;
 
 pub use alerting::{AlertRule, AlertState, Alert, AlertManager, AlertCondition};
 pub use recording::{RecordingRule, RecordingManager};
 pub use evaluator::RuleEvaluator;
+pub use pre_aggregation::{PreAggregationManager, PreAggregationManagerConfig, RuleUpdates};
 
 /// 规则文件
 #[derive(Debug, Clone, Serialize, Deserialize)]
