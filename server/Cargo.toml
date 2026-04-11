@@ -34,6 +34,7 @@ chrono.workspace = true
 uuid.workspace = true
 regex.workspace = true
 num_cpus = "1.16"
+parking_lot.workspace = true
 
 # Async
 async-trait.workspace = true

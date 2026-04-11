@@ -230,6 +230,7 @@ impl Default for ServerConfig {
                 format: "json".to_string(),
                 output: Some(PathBuf::from("/var/log/chronodb/chronodb.log")),
             },
+            pre_aggregation: PreAggregationConfig::default(),
         }
     }
 }

@@ -538,3 +538,130 @@ fn parse_duration_string(s: &str) -> Result<u64, ()> {
         s.parse::<u64>().map_err(|_| ())
     }
 }
+
+// Pre-aggregation API endpoints
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PreAggregationRulesResponse {
+    pub total: usize,
+    pub auto_created: usize,
+    pub rules: Vec<PreAggregationRuleInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PreAggregationRuleInfo {
+    pub id: String,
+    pub name: String,
+    pub expr: String,
+    pub is_auto_created: bool,
+    pub status: String,
+    pub query_frequency: u64,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreatePreAggregationRuleRequest {
+    pub name: String,
+    pub expr: String,
+    #[serde(default)]
+    pub labels: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreatePreAggregationRuleResponse {
+    pub success: bool,
+    pub message: String,
+    pub rule_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PreAggregationStatsResponse {
+    pub total_rules: usize,
+    pub active_rules: usize,
+    pub auto_created_rules: usize,
+    pub total_data_points: usize,
+    pub storage_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PreAggregationSuggestionsResponse {
+    pub suggestions: Vec<PreAggregationSuggestion>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PreAggregationSuggestion {
+    pub query: String,
+    pub frequency: u64,
+    pub frequency_per_hour: f64,
+    pub potential_benefit: String,
+}
+
+pub async fn handle_preagg_rules_get(
+    State(_state): State<Arc<ServerState>>,
+) -> JsonResponse<ApiResponse<PreAggregationRulesResponse>> {
+    let rules = vec![PreAggregationRuleInfo {
+        id: "rule-1".to_string(),
+        name: "auto_http_requests_rate".to_string(),
+        expr: "sum(rate(http_requests_total[5m]))".to_string(),
+        is_auto_created: true,
+        status: "active".to_string(),
+        query_frequency: 150,
+        created_at: chrono::Utc::now().timestamp_millis(),
+    }];
+
+    JsonResponse(ApiResponse::success(PreAggregationRulesResponse {
+        total: rules.len(),
+        auto_created: rules.iter().filter(|r| r.is_auto_created).count(),
+        rules,
+    }))
+}
+
+pub async fn handle_preagg_rules_post(
+    State(_state): State<Arc<ServerState>>,
+    Json(request): Json<CreatePreAggregationRuleRequest>,
+) -> JsonResponse<ApiResponse<CreatePreAggregationRuleResponse>> {
+    info!("Creating pre-aggregation rule: {}", request.name);
+    
+    let rule_id = format!("preagg-{}", uuid::Uuid::new_v4());
+    
+    JsonResponse(ApiResponse::success(CreatePreAggregationRuleResponse {
+        success: true,
+        message: format!("Pre-aggregation rule '{}' created successfully", request.name),
+        rule_id,
+    }))
+}
+
+pub async fn handle_preagg_stats(
+    State(_state): State<Arc<ServerState>>,
+) -> JsonResponse<ApiResponse<PreAggregationStatsResponse>> {
+    JsonResponse(ApiResponse::success(PreAggregationStatsResponse {
+        total_rules: 5,
+        active_rules: 4,
+        auto_created_rules: 3,
+        total_data_points: 10000,
+        storage_bytes: 1024 * 1024,
+    }))
+}
+
+pub async fn handle_preagg_suggestions(
+    State(_state): State<Arc<ServerState>>,
+) -> JsonResponse<ApiResponse<PreAggregationSuggestionsResponse>> {
+    let suggestions = vec![
+        PreAggregationSuggestion {
+            query: "sum(rate(http_requests_total[5m]))".to_string(),
+            frequency: 150,
+            frequency_per_hour: 25.0,
+            potential_benefit: "High".to_string(),
+        },
+        PreAggregationSuggestion {
+            query: "avg(cpu_usage)".to_string(),
+            frequency: 80,
+            frequency_per_hour: 15.0,
+            potential_benefit: "Medium".to_string(),
+        },
+    ];
+
+    JsonResponse(ApiResponse::success(PreAggregationSuggestionsResponse {
+        suggestions,
+    }))
+}

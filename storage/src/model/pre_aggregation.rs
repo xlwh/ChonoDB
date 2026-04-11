@@ -108,7 +108,7 @@ impl QueryFrequencyStats {
         self.cleanup_old_records();
     }
 
-    fn cleanup_old_records(&mut self) {
+    pub fn cleanup_old_records(&mut self) {
         let window_millis = self.window_size_hours * 60 * 60 * 1000;
         let now = chrono::Utc::now().timestamp_millis();
         let cutoff = now - window_millis as i64;

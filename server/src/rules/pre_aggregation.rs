@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use parking_lot::RwLock;
 use chrono::Utc;
-use crate::model::{PreAggregationRule, RuleStatus};
-use crate::query::{FrequencyTracker, FrequencyConfig};
+use chronodb_storage::model::{PreAggregationRule, RuleStatus};
+use chronodb_storage::query::{FrequencyTracker, FrequencyConfig, normalize_query};
 use crate::error::Result;
 
 pub struct PreAggregationManager {
@@ -213,13 +213,13 @@ impl PreAggregationManager {
     }
 
     pub fn find_matching_rules(&self, query: &str) -> Vec<PreAggregationRule> {
-        let normalized = crate::query::normalize_query(query);
+        let normalized = normalize_query(query);
         
         self.rules.read()
             .values()
             .filter(|rule| {
                 rule.status == RuleStatus::Active && 
-                crate::query::normalize_query(&rule.expr) == normalized
+                normalize_query(&rule.expr) == normalized
             })
             .cloned()
             .collect()
