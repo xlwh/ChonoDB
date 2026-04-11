@@ -148,7 +148,10 @@ impl BackupManager {
 
     /// 执行备份
     pub async fn perform_backup(&mut self, data_dir: &str) -> Result<String> {
-        let backup_id = format!("backup_{}", Utc::now().timestamp());
+        // 使用毫秒级时间戳和随机数确保备份 ID 唯一
+        let timestamp = Utc::now().timestamp_millis();
+        let random_suffix = rand::random::<u32>();
+        let backup_id = format!("backup_{}_{}", timestamp, random_suffix);
         let backup_path = Path::new(&self.config.backup_dir).join(&backup_id);
 
         info!("Starting backup: {}", backup_id);
