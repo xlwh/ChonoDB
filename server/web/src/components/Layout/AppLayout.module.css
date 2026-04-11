@@ -1,0 +1,34 @@
+.layout {
+  min-height: 100vh;
+}
+
+.collapsedLayout {
+  margin-left: 0;
+  transition: margin-left 0.2s;
+}
+
+.content {
+  margin: 16px;
+  padding: 24px;
+  background: #fff;
+  border-radius: 8px;
+  min-height: calc(100vh - 64px - 32px);
+  overflow: auto;
+}
+
+@media (max-width: 768px) {
+  .content {
+    margin: 8px;
+    padding: 16px;
+    min-height: calc(100vh - 64px - 16px);
+  }
+}
+
+@media (max-width: 576px) {
+  .content {
+    margin: 4px;
+    padding: 12px;
+    border-radius: 4px;
+    min-height: calc(100vh - 64px - 8px);
+  }
+}

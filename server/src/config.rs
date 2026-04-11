@@ -32,6 +32,14 @@ pub struct ServerConfig {
     
     /// 日志配置
     pub log: LogConfig,
+    
+    /// 预聚合配置
+    #[serde(default)]
+    pub pre_aggregation: PreAggregationConfig,
+    
+    /// 降采样配置
+    #[serde(default)]
+    pub downsampling: DownsamplingConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,6 +234,8 @@ impl Default for ServerConfig {
                 format: "json".to_string(),
                 output: Some(PathBuf::from("/var/log/chronodb/chronodb.log")),
             },
+            pre_aggregation: PreAggregationConfig::default(),
+            downsampling: DownsamplingConfig::default(),
         }
     }
 }
@@ -249,5 +259,172 @@ impl ServerConfig {
             .map_err(|e| crate::error::ServerError::Config(format!("Failed to write config file: {}", e)))?;
         
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreAggregationConfig {
+    /// 自动创建配置
+    pub auto_create: AutoCreateConfig,
+    
+    /// 自动清理配置
+    pub auto_cleanup: AutoCleanupConfig,
+    
+    /// 存储配置
+    pub storage: PreAggregationStorageConfig,
+}
+
+impl Default for PreAggregationConfig {
+    fn default() -> Self {
+        Self {
+            auto_create: AutoCreateConfig::default(),
+            auto_cleanup: AutoCleanupConfig::default(),
+            storage: PreAggregationStorageConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoCreateConfig {
+    /// 是否启用自动创建
+    pub enabled: bool,
+    
+    /// 查询频率阈值（次/小时）
+    pub frequency_threshold: u64,
+    
+    /// 统计时间窗口（小时）
+    pub time_window: u64,
+    
+    /// 最大自动创建规则数
+    pub max_auto_rules: usize,
+    
+    /// 排除的查询模式（正则表达式）
+    #[serde(default)]
+    pub exclude_patterns: Vec<String>,
+}
+
+impl Default for AutoCreateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            frequency_threshold: 20,
+            time_window: 24,
+            max_auto_rules: 100,
+            exclude_patterns: vec![
+                "^up$".to_string(),
+                "^ALERTS".to_string(),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoCleanupConfig {
+    /// 是否启用自动清理
+    pub enabled: bool,
+    
+    /// 清理检查间隔（小时）
+    pub check_interval: u64,
+    
+    /// 低频阈值（次/小时）
+    pub low_frequency_threshold: u64,
+    
+    /// 清理前的观察期（小时）
+    pub observation_period: u64,
+}
+
+impl Default for AutoCleanupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            check_interval: 6,
+            low_frequency_threshold: 5,
+            observation_period: 48,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreAggregationStorageConfig {
+    /// 预聚合数据保留时间（天）
+    pub retention_days: u32,
+    
+    /// 最大存储空间（GB）
+    pub max_storage_gb: u32,
+    
+    /// 压缩算法
+    pub compression: String,
+}
+
+impl Default for PreAggregationStorageConfig {
+    fn default() -> Self {
+        Self {
+            retention_days: 30,
+            max_storage_gb: 100,
+            compression: "zstd".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownsamplingConfig {
+    /// 是否启用降采样
+    pub enabled: bool,
+    
+    /// 降采样间隔（秒）
+    pub interval: u64,
+    
+    /// 并发数
+    pub concurrency: usize,
+    
+    /// 任务超时（秒）
+    pub timeout: u64,
+    
+    /// 降采样级别配置
+    pub levels: Vec<DownsamplingLevelConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownsamplingLevelConfig {
+    /// 降采样级别
+    pub level: String,
+    
+    /// 是否启用
+    pub enabled: bool,
+    
+    /// 降采样函数
+    pub functions: Vec<String>,
+}
+
+impl Default for DownsamplingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval: 900, // 15分钟
+            concurrency: 4,
+            timeout: 3600, // 1小时
+            levels: vec![
+                DownsamplingLevelConfig {
+                    level: "L1".to_string(),
+                    enabled: true,
+                    functions: vec!["min", "max", "avg", "sum", "count", "last"].into_iter().map(String::from).collect(),
+                },
+                DownsamplingLevelConfig {
+                    level: "L2".to_string(),
+                    enabled: true,
+                    functions: vec!["min", "max", "avg", "sum", "count", "last"].into_iter().map(String::from).collect(),
+                },
+                DownsamplingLevelConfig {
+                    level: "L3".to_string(),
+                    enabled: true,
+                    functions: vec!["min", "max", "avg", "sum", "count", "last"].into_iter().map(String::from).collect(),
+                },
+                DownsamplingLevelConfig {
+                    level: "L4".to_string(),
+                    enabled: true,
+                    functions: vec!["min", "max", "avg", "sum", "count", "last"].into_iter().map(String::from).collect(),
+                },
+            ],
+        }
     }
 }

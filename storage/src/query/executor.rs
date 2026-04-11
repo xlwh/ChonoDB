@@ -4,6 +4,8 @@ use crate::model::{Label, Labels, Sample, TimeSeries, TimeSeriesId};
 use crate::query::{QueryPlan, QueryResult};
 use crate::query::planner::{PlanType, VectorQueryPlan, MatrixQueryPlan, CallPlan};
 use crate::query::parser::Function;
+use crate::query::parallel::{ParallelQueryExecutor, ParallelConfig, ParallelContext};
+use crate::query::cache::{ThreadSafeQueryCache, CacheConfig, CacheKey};
 use crate::columnstore::DownsampleLevel;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,6 +20,8 @@ enum SetOp {
 #[derive(Clone)]
 pub struct QueryExecutor {
     memstore: Arc<MemStore>,
+    parallel_ctx: Arc<parking_lot::RwLock<ParallelContext>>,
+    cache: Option<ThreadSafeQueryCache<QueryResult>>,
 }
 
 pub struct ExecutionContext {
@@ -28,26 +32,108 @@ pub struct ExecutionContext {
 
 impl QueryExecutor {
     pub fn new(memstore: Arc<MemStore>) -> Self {
+        let config = ParallelConfig::default();
+        let parallel_ctx = Arc::new(parking_lot::RwLock::new(ParallelContext::new(config)));
         Self {
             memstore,
+            parallel_ctx,
+            cache: None,
+        }
+    }
+
+    pub fn with_parallel_config(memstore: Arc<MemStore>, config: ParallelConfig) -> Self {
+        let parallel_ctx = Arc::new(parking_lot::RwLock::new(ParallelContext::new(config)));
+        Self {
+            memstore,
+            parallel_ctx,
+            cache: None,
+        }
+    }
+
+    pub fn with_cache(memstore: Arc<MemStore>, cache_config: CacheConfig) -> Self {
+        let config = ParallelConfig::default();
+        let parallel_ctx = Arc::new(parking_lot::RwLock::new(ParallelContext::new(config)));
+        let cache = ThreadSafeQueryCache::new(cache_config);
+        Self {
+            memstore,
+            parallel_ctx,
+            cache: Some(cache),
+        }
+    }
+
+    pub fn with_cache_and_parallel(
+        memstore: Arc<MemStore>,
+        parallel_config: ParallelConfig,
+        cache_config: CacheConfig,
+    ) -> Self {
+        let parallel_ctx = Arc::new(parking_lot::RwLock::new(ParallelContext::new(parallel_config)));
+        let cache = ThreadSafeQueryCache::new(cache_config);
+        Self {
+            memstore,
+            parallel_ctx,
+            cache: Some(cache),
+        }
+    }
+
+    pub fn enable_cache(&mut self, config: CacheConfig) {
+        self.cache = Some(ThreadSafeQueryCache::new(config));
+    }
+
+    pub fn disable_cache(&mut self) {
+        self.cache = None;
+    }
+
+    pub fn cache_stats(&self) -> Option<crate::query::cache::CacheStats> {
+        self.cache.as_ref().map(|c| c.stats())
+    }
+
+    pub fn clear_cache(&self) {
+        if let Some(ref cache) = self.cache {
+            cache.clear();
         }
     }
 
     pub async fn execute(&self, plan: &QueryPlan) -> Result<QueryResult> {
+        self.execute_with_query(plan, None).await
+    }
+
+    pub async fn execute_with_query(&self, plan: &QueryPlan, query_str: Option<&str>) -> Result<QueryResult> {
         let ctx = ExecutionContext {
             start: plan.start,
             end: plan.end,
             step: plan.step,
         };
         
-        // Calculate downsample level based on query range
+        if let Some(ref cache) = self.cache {
+            if let Some(query) = query_str {
+                let cache_key = CacheKey::new(query.to_string(), plan.start, plan.end, plan.step);
+                
+                if let Some(cached_result) = cache.get(&cache_key) {
+                    tracing::debug!("Cache hit for query: {}", query);
+                    return Ok(cached_result);
+                }
+                
+                tracing::debug!("Cache miss for query: {}", query);
+            }
+        }
+        
         let query_range = plan.end - plan.start;
         let downsample_level = DownsampleLevel::from_query_range(query_range);
         
         tracing::info!("Query range: {}ms, using downsample level: {:?}", query_range, downsample_level);
         
         let series = self.execute_plan(&plan.plan_type, &ctx).await?;
-        Ok(QueryResult::new(series, plan.start, plan.end, plan.step))
+        let result = QueryResult::new(series, plan.start, plan.end, plan.step);
+        
+        if let Some(ref cache) = self.cache {
+            if let Some(query) = query_str {
+                let cache_key = CacheKey::new(query.to_string(), plan.start, plan.end, plan.step);
+                cache.set(cache_key, result.clone());
+                tracing::debug!("Cached result for query: {}", query);
+            }
+        }
+        
+        Ok(result)
     }
 
     fn execute_plan<'a>(&'a self, plan: &'a PlanType, ctx: &'a ExecutionContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<TimeSeries>>> + Send + 'a>> {
@@ -67,7 +153,109 @@ impl QueryExecutor {
         let matchers: Vec<(String, String)> = plan.matchers.clone();
         let query_range = ctx.end - ctx.start;
         let downsample_level = DownsampleLevel::from_query_range(query_range);
-        self.memstore.query_with_downsample(&matchers, ctx.start, ctx.end, downsample_level)
+        
+        let series_ids = self.memstore.find_series(&matchers)?;
+        
+        if series_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        let should_parallel = {
+            let parallel_ctx = self.parallel_ctx.read();
+            parallel_ctx.should_use_parallel(series_ids.len(), query_range)
+        };
+        
+        if should_parallel {
+            self.execute_vector_query_parallel(series_ids, ctx.start, ctx.end, downsample_level).await
+        } else {
+            self.memstore.query_with_downsample(&matchers, ctx.start, ctx.end, downsample_level)
+        }
+    }
+    
+    async fn execute_vector_query_parallel(
+        &self,
+        series_ids: Vec<TimeSeriesId>,
+        start: i64,
+        end: i64,
+        downsample_level: DownsampleLevel,
+    ) -> Result<Vec<TimeSeries>> {
+        let executor = {
+            let parallel_ctx = self.parallel_ctx.read();
+            parallel_ctx.executor.clone()
+        };
+        
+        let memstore = self.memstore.clone();
+        
+        let process_fn = move |series_id: TimeSeriesId| {
+            let memstore = memstore.clone();
+            async move {
+                if let Some(mut ts) = memstore.get_series(series_id) {
+                    let samples: Vec<Sample> = ts.samples.drain(..).collect();
+                    let filtered: Vec<Sample> = samples.into_iter()
+                        .filter(|s| s.timestamp >= start && s.timestamp <= end)
+                        .collect();
+                    
+                    if !filtered.is_empty() {
+                        let downsampled = Self::apply_downsampling_to_samples(filtered, downsample_level);
+                        if !downsampled.is_empty() {
+                            ts.samples = downsampled;
+                            return Ok(Some(ts));
+                        }
+                    }
+                }
+                Ok(None)
+            }
+        };
+        
+        let (results, stats) = executor.execute_series_parallel(series_ids, process_fn).await?;
+        
+        {
+            let mut parallel_ctx = self.parallel_ctx.write();
+            parallel_ctx.record_stats(stats);
+            parallel_ctx.adjust_concurrency();
+        }
+        
+        Ok(results)
+    }
+    
+    fn apply_downsampling_to_samples(samples: Vec<Sample>, level: DownsampleLevel) -> Vec<Sample> {
+        if samples.is_empty() || level == DownsampleLevel::L0 {
+            return samples;
+        }
+        
+        let resolution = level.resolution_ms();
+        if resolution == 0 {
+            return samples;
+        }
+        
+        let mut downsampled = Vec::new();
+        let mut current_window = samples[0].timestamp - (samples[0].timestamp % resolution);
+        let mut window_samples = Vec::new();
+        
+        for sample in samples {
+            let sample_window = sample.timestamp - (sample.timestamp % resolution);
+            
+            if sample_window != current_window {
+                if !window_samples.is_empty() {
+                    let sum: f64 = window_samples.iter().map(|s: &Sample| s.value).sum();
+                    let avg = sum / window_samples.len() as f64;
+                    downsampled.push(Sample::new(current_window, avg));
+                }
+                
+                current_window = sample_window;
+                window_samples.clear();
+            }
+            
+            window_samples.push(sample);
+        }
+        
+        if !window_samples.is_empty() {
+            let sum: f64 = window_samples.iter().map(|s: &Sample| s.value).sum();
+            let avg = sum / window_samples.len() as f64;
+            downsampled.push(Sample::new(current_window, avg));
+        }
+        
+        downsampled
     }
 
     async fn execute_matrix_query(&self, plan: &MatrixQueryPlan, ctx: &ExecutionContext) -> Result<Vec<TimeSeries>> {
@@ -178,27 +366,62 @@ impl QueryExecutor {
             return Ok(Vec::new());
         }
         
-        // Sum aggregation by timestamp
-        let mut timestamp_sums = std::collections::HashMap::new();
-        
-        for ts in &series {
-            for sample in &ts.samples {
-                *timestamp_sums.entry(sample.timestamp).or_insert(0.0) += sample.value;
+        if series.len() > 20 {
+            let executor = {
+                let parallel_ctx = self.parallel_ctx.read();
+                parallel_ctx.executor.clone()
+            };
+            
+            let aggregate_fn = |batch: Vec<TimeSeries>| {
+                async move {
+                    let mut timestamp_sums = HashMap::new();
+                    
+                    for ts in &batch {
+                        for sample in &ts.samples {
+                            *timestamp_sums.entry(sample.timestamp).or_insert(0.0) += sample.value;
+                        }
+                    }
+                    
+                    let mut sum_series = TimeSeries::new(0, batch[0].labels.clone());
+                    let mut timestamps: Vec<_> = timestamp_sums.keys().collect();
+                    timestamps.sort();
+                    
+                    for timestamp in timestamps {
+                        sum_series.add_sample(Sample::new(*timestamp, timestamp_sums[timestamp]));
+                    }
+                    
+                    Ok(sum_series)
+                }
+            };
+            
+            let (result, stats) = executor.parallel_aggregate(series, aggregate_fn).await?;
+            
+            {
+                let mut parallel_ctx = self.parallel_ctx.write();
+                parallel_ctx.record_stats(stats);
             }
+            
+            Ok(vec![result])
+        } else {
+            let mut timestamp_sums = HashMap::new();
+            
+            for ts in &series {
+                for sample in &ts.samples {
+                    *timestamp_sums.entry(sample.timestamp).or_insert(0.0) += sample.value;
+                }
+            }
+            
+            let mut sum_series = TimeSeries::new(0, series[0].labels.clone());
+            
+            let mut timestamps: Vec<_> = timestamp_sums.keys().collect();
+            timestamps.sort();
+            
+            for timestamp in timestamps {
+                sum_series.add_sample(Sample::new(*timestamp, timestamp_sums[timestamp]));
+            }
+            
+            Ok(vec![sum_series])
         }
-        
-        // Create a new time series with the summed values
-        let mut sum_series = TimeSeries::new(0, series[0].labels.clone());
-        
-        // Convert the hash map back to samples, sorted by timestamp
-        let mut timestamps: Vec<_> = timestamp_sums.keys().collect();
-        timestamps.sort();
-        
-        for timestamp in timestamps {
-            sum_series.add_sample(Sample::new(*timestamp, timestamp_sums[timestamp]));
-        }
-        
-        Ok(vec![sum_series])
     }
 
     async fn execute_avg(&self, plan: &CallPlan, ctx: &ExecutionContext) -> Result<Vec<TimeSeries>> {
@@ -1463,5 +1686,196 @@ mod tests {
         let result = executor.execute(&plan).await.unwrap();
         assert_eq!(result.series_count(), 1);
         assert_eq!(result.series[0].samples[0].value, 300.0);
+    }
+
+    #[tokio::test]
+    async fn test_cache_hit() {
+        let store = create_test_store();
+        let cache_config = CacheConfig::new(100, 1024 * 1024, 300);
+        let executor = QueryExecutor::with_cache(store.clone(), cache_config);
+
+        let labels = vec![
+            Label::new("__name__", "http_requests_total"),
+            Label::new("job", "prometheus"),
+        ];
+
+        let samples = vec![
+            Sample::new(1000, 100.0),
+            Sample::new(2000, 200.0),
+            Sample::new(3000, 300.0),
+        ];
+
+        store.write(labels, samples).unwrap();
+
+        let plan = QueryPlan {
+            plan_type: PlanType::VectorQuery(VectorQueryPlan {
+                name: Some("http_requests_total".to_string()),
+                matchers: vec![("job".to_string(), "prometheus".to_string())],
+            }),
+            start: 0,
+            end: 4000,
+            step: 1000,
+        };
+
+        let result1 = executor.execute_with_query(&plan, Some("http_requests_total{job=\"prometheus\"}")).await.unwrap();
+        assert_eq!(result1.series_count(), 1);
+
+        let stats = executor.cache_stats().unwrap();
+        assert_eq!(stats.misses, 1);
+        assert_eq!(stats.hits, 0);
+
+        let result2 = executor.execute_with_query(&plan, Some("http_requests_total{job=\"prometheus\"}")).await.unwrap();
+        assert_eq!(result2.series_count(), 1);
+
+        let stats = executor.cache_stats().unwrap();
+        assert_eq!(stats.misses, 1);
+        assert_eq!(stats.hits, 1);
+        
+        assert_eq!(result1.start, result2.start);
+        assert_eq!(result1.end, result2.end);
+    }
+
+    #[tokio::test]
+    async fn test_cache_miss_different_query() {
+        let store = create_test_store();
+        let cache_config = CacheConfig::new(100, 1024 * 1024, 300);
+        let executor = QueryExecutor::with_cache(store.clone(), cache_config);
+
+        let labels = vec![
+            Label::new("__name__", "http_requests_total"),
+            Label::new("job", "prometheus"),
+        ];
+
+        let samples = vec![
+            Sample::new(1000, 100.0),
+        ];
+
+        store.write(labels, samples).unwrap();
+
+        let plan = QueryPlan {
+            plan_type: PlanType::VectorQuery(VectorQueryPlan {
+                name: Some("http_requests_total".to_string()),
+                matchers: vec![("job".to_string(), "prometheus".to_string())],
+            }),
+            start: 0,
+            end: 2000,
+            step: 1000,
+        };
+
+        executor.execute_with_query(&plan, Some("http_requests_total{job=\"prometheus\"}")).await.unwrap();
+        
+        let plan2 = QueryPlan {
+            plan_type: PlanType::VectorQuery(VectorQueryPlan {
+                name: Some("http_requests_total".to_string()),
+                matchers: vec![],
+            }),
+            start: 0,
+            end: 2000,
+            step: 1000,
+        };
+        
+        executor.execute_with_query(&plan2, Some("http_requests_total")).await.unwrap();
+
+        let stats = executor.cache_stats().unwrap();
+        assert_eq!(stats.misses, 2);
+        assert_eq!(stats.hits, 0);
+    }
+
+    #[tokio::test]
+    async fn test_cache_clear() {
+        let store = create_test_store();
+        let cache_config = CacheConfig::new(100, 1024 * 1024, 300);
+        let executor = QueryExecutor::with_cache(store.clone(), cache_config);
+
+        let labels = vec![
+            Label::new("__name__", "http_requests_total"),
+            Label::new("job", "prometheus"),
+        ];
+
+        let samples = vec![Sample::new(1000, 100.0)];
+        store.write(labels, samples).unwrap();
+
+        let plan = QueryPlan {
+            plan_type: PlanType::VectorQuery(VectorQueryPlan {
+                name: Some("http_requests_total".to_string()),
+                matchers: vec![("job".to_string(), "prometheus".to_string())],
+            }),
+            start: 0,
+            end: 2000,
+            step: 1000,
+        };
+
+        executor.execute_with_query(&plan, Some("http_requests_total{job=\"prometheus\"}")).await.unwrap();
+        
+        let stats = executor.cache_stats().unwrap();
+        assert_eq!(stats.entry_count, 1);
+        
+        executor.clear_cache();
+        
+        let stats = executor.cache_stats().unwrap();
+        assert_eq!(stats.entry_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_cache_disabled() {
+        let store = create_test_store();
+        let executor = QueryExecutor::new(store.clone());
+
+        let labels = vec![
+            Label::new("__name__", "http_requests_total"),
+            Label::new("job", "prometheus"),
+        ];
+
+        let samples = vec![Sample::new(1000, 100.0)];
+        store.write(labels, samples).unwrap();
+
+        let plan = QueryPlan {
+            plan_type: PlanType::VectorQuery(VectorQueryPlan {
+                name: Some("http_requests_total".to_string()),
+                matchers: vec![("job".to_string(), "prometheus".to_string())],
+            }),
+            start: 0,
+            end: 2000,
+            step: 1000,
+        };
+
+        executor.execute_with_query(&plan, Some("http_requests_total{job=\"prometheus\"}")).await.unwrap();
+        
+        assert!(executor.cache_stats().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cache_hit_rate() {
+        let store = create_test_store();
+        let cache_config = CacheConfig::new(100, 1024 * 1024, 300);
+        let executor = QueryExecutor::with_cache(store.clone(), cache_config);
+
+        let labels = vec![
+            Label::new("__name__", "http_requests_total"),
+            Label::new("job", "prometheus"),
+        ];
+
+        let samples = vec![Sample::new(1000, 100.0)];
+        store.write(labels, samples).unwrap();
+
+        let plan = QueryPlan {
+            plan_type: PlanType::VectorQuery(VectorQueryPlan {
+                name: Some("http_requests_total".to_string()),
+                matchers: vec![("job".to_string(), "prometheus".to_string())],
+            }),
+            start: 0,
+            end: 2000,
+            step: 1000,
+        };
+
+        executor.execute_with_query(&plan, Some("query1")).await.unwrap();
+        executor.execute_with_query(&plan, Some("query1")).await.unwrap();
+        executor.execute_with_query(&plan, Some("query1")).await.unwrap();
+        executor.execute_with_query(&plan, Some("query2")).await.unwrap();
+
+        let stats = executor.cache_stats().unwrap();
+        assert_eq!(stats.hits, 2);
+        assert_eq!(stats.misses, 2);
+        assert!((stats.hit_rate() - 0.5).abs() < 0.01);
     }
 }

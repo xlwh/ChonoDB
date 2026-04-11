@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package prometheus;
+
+// TimeSeries represents a single time series.
+message TimeSeries {
+  repeated Label labels = 1;
+  repeated Sample samples = 2;
+  repeated Exemplar exemplars = 3;
+}
+
+// Label represents a label key-value pair.
+message Label {
+  string name = 1;
+  string value = 2;
+}
+
+// Sample represents a single sample in a time series.
+// Note: field order matches Prometheus remote write spec
+message Sample {
+  double value = 1;
+  int64 timestamp = 2;
+}
+
+// Exemplar represents an exemplar of a sample.
+message Exemplar {
+  repeated Label labels = 1;
+  double value = 2;
+  int64 timestamp = 3;
+}
+
+// WriteRequest represents a remote write request.
+message WriteRequest {
+  repeated TimeSeries timeseries = 1;
+}
+
+// ReadRequest represents a remote read request.
+message ReadRequest {
+  repeated Query queries = 1;
+}
+
+// Query represents a query in a remote read request.
+message Query {
+  int64 start_timestamp_ms = 1;
+  int64 end_timestamp_ms = 2;
+  repeated LabelMatcher matchers = 3;
+  Hints hints = 4;
+}
+
+// LabelMatcher represents a label matcher.
+enum MatchType {
+  EQUAL = 0;
+  NOT_EQUAL = 1;
+  REGEX_MATCH = 2;
+  REGEX_NO_MATCH = 3;
+}
+
+message LabelMatcher {
+  string name = 1;
+  MatchType type = 2;
+  string value = 3;
+}
+
+// Hints represents hints for the remote read request.
+message Hints {
+  int64 step_ms = 1;
+  string func = 2;
+  repeated string grouping = 3;
+  bool by = 4;
+  int64 range_ms = 5;
+}
+
+// ReadResponse represents a remote read response.
+message ReadResponse {
+  repeated QueryResult results = 1;
+}
+
+// QueryResult represents the result of a query in a remote read response.
+message QueryResult {
+  repeated TimeSeries timeseries = 1;
+}

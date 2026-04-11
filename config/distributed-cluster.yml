@@ -1,0 +1,137 @@
+# ChronoDB 分布式集群配置示例
+# 这是一个3节点集群的配置示例
+
+# 节点1配置 (协调器节点)
+# 保存为 node1.yml
+---
+listen_address: "0.0.0.0:9090"
+
+storage:
+  mode: "distributed"
+  data_dir: "/var/lib/chronodb/node1"
+  backend: "local"
+  distributed:
+    node_id: "node1"
+    cluster_name: "chronodb-cluster"
+    node_address: "127.0.0.1:9090"
+    coordinator_address: "127.0.0.1:9090"
+    is_coordinator: true
+    shard:
+      count: 16
+      strategy: "hash"
+      virtual_nodes: 128
+    replication:
+      factor: 3
+      strategy: "asynchronous"
+      timeout: "5s"
+      min_read_replicas: 1
+      queue_size: 10000
+      batch_size: 100
+    cluster:
+      heartbeat_interval_ms: 1000
+      node_timeout_ms: 5000
+      discovery_addresses:
+        - "127.0.0.1:9091"
+        - "127.0.0.1:9092"
+      enable_auto_discovery: true
+
+memory:
+  max_memory_mb: 2048
+  cache_size_mb: 512
+
+retention:
+  enabled: true
+  default_duration: "30d"
+  max_series: 1000000
+
+log:
+  level: "info"
+  file: "/var/log/chronodb/node1.log"
+
+---
+# 节点2配置
+# 保存为 node2.yml
+listen_address: "0.0.0.0:9091"
+
+storage:
+  mode: "distributed"
+  data_dir: "/var/lib/chronodb/node2"
+  backend: "local"
+  distributed:
+    node_id: "node2"
+    cluster_name: "chronodb-cluster"
+    node_address: "127.0.0.1:9091"
+    coordinator_address: "127.0.0.1:9090"
+    is_coordinator: false
+    shard:
+      count: 16
+      strategy: "hash"
+      virtual_nodes: 128
+    replication:
+      factor: 3
+      strategy: "asynchronous"
+      timeout: "5s"
+      min_read_replicas: 1
+      queue_size: 10000
+      batch_size: 100
+    cluster:
+      heartbeat_interval_ms: 1000
+      node_timeout_ms: 5000
+      enable_auto_discovery: true
+
+memory:
+  max_memory_mb: 2048
+  cache_size_mb: 512
+
+retention:
+  enabled: true
+  default_duration: "30d"
+  max_series: 1000000
+
+log:
+  level: "info"
+  file: "/var/log/chronodb/node2.log"
+
+---
+# 节点3配置
+# 保存为 node3.yml
+listen_address: "0.0.0.0:9092"
+
+storage:
+  mode: "distributed"
+  data_dir: "/var/lib/chronodb/node3"
+  backend: "local"
+  distributed:
+    node_id: "node3"
+    cluster_name: "chronodb-cluster"
+    node_address: "127.0.0.1:9092"
+    coordinator_address: "127.0.0.1:9090"
+    is_coordinator: false
+    shard:
+      count: 16
+      strategy: "hash"
+      virtual_nodes: 128
+    replication:
+      factor: 3
+      strategy: "asynchronous"
+      timeout: "5s"
+      min_read_replicas: 1
+      queue_size: 10000
+      batch_size: 100
+    cluster:
+      heartbeat_interval_ms: 1000
+      node_timeout_ms: 5000
+      enable_auto_discovery: true
+
+memory:
+  max_memory_mb: 2048
+  cache_size_mb: 512
+
+retention:
+  enabled: true
+  default_duration: "30d"
+  max_series: 1000000
+
+log:
+  level: "info"
+  file: "/var/log/chronodb/node3.log"

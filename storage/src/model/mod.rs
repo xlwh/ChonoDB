@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod pre_aggregation;
+
+pub use pre_aggregation::*;
+
 pub type TimeSeriesId = u64;
 pub type Timestamp = i64;
 

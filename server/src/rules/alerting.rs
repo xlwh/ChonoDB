@@ -51,6 +51,31 @@ impl Default for AlertCondition {
     }
 }
 
+impl AlertCondition {
+    /// 从字符串解析告警条件
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        let parts: Vec<&str> = s.trim().split_whitespace().collect();
+        if parts.len() != 2 {
+            return Err("Invalid condition format. Expected format: '<operator> <value>'".to_string());
+        }
+
+        let operator = parts[0];
+        let value_str = parts[1];
+
+        let value = value_str.parse::<f64>().map_err(|e| format!("Invalid value: {}", e))?;
+
+        match operator {
+            "gt" => Ok(AlertCondition::Gt(value)),
+            "gte" => Ok(AlertCondition::Gte(value)),
+            "lt" => Ok(AlertCondition::Lt(value)),
+            "lte" => Ok(AlertCondition::Lte(value)),
+            "eq" => Ok(AlertCondition::Eq(value)),
+            "ne" => Ok(AlertCondition::Ne(value)),
+            _ => Err(format!("Invalid operator: {}", operator)),
+        }
+    }
+}
+
 /// 告警状态
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -286,5 +311,113 @@ impl AlertManager {
     /// 添加控制台通知器
     pub fn add_console_notifier(&mut self) {
         self.add_notifier(Box::new(ConsoleNotifier));
+    }
+
+    /// 添加邮件通知器
+    pub fn add_email_notifier(&mut self, config: EmailConfig) {
+        self.add_notifier(Box::new(EmailNotifier::new(config)));
+    }
+
+    /// 添加 Webhook 通知器
+    pub fn add_webhook_notifier(&mut self, config: WebhookConfig) {
+        self.add_notifier(Box::new(WebhookNotifier::new(config)));
+    }
+}
+
+/// 邮件通知配置
+#[derive(Debug, Clone)]
+pub struct EmailConfig {
+    pub smtp_server: String,
+    pub smtp_port: u16,
+    pub username: String,
+    pub password: String,
+    pub from_address: String,
+    pub to_addresses: Vec<String>,
+}
+
+/// 邮件通知器
+pub struct EmailNotifier {
+    config: EmailConfig,
+}
+
+impl EmailNotifier {
+    pub fn new(config: EmailConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl AlertNotifier for EmailNotifier {
+    fn notify(&self, alert: &Alert, state_change: bool) -> Result<(), String> {
+        if !state_change {
+            return Ok(());
+        }
+
+        let subject = format!(
+            "[{}] Alert: {}",
+            match alert.state {
+                AlertState::Inactive => "RESOLVED",
+                AlertState::Pending => "PENDING",
+                AlertState::Firing => "FIRING",
+            },
+            alert.name
+        );
+
+        let body = format!(
+            "Alert: {}\nState: {:?}\nValue: {}\nLabels: {:?}\nAnnotations: {:?}",
+            alert.name, alert.state, alert.value, alert.labels, alert.annotations
+        );
+
+        println!(
+            "[EMAIL] Sending email to {:?}\nSubject: {}\nBody:\n{}",
+            self.config.to_addresses, subject, body
+        );
+
+        Ok(())
+    }
+}
+
+/// Webhook 通知配置
+#[derive(Debug, Clone)]
+pub struct WebhookConfig {
+    pub url: String,
+    pub headers: HashMap<String, String>,
+    pub timeout_secs: u64,
+}
+
+/// Webhook 通知器
+pub struct WebhookNotifier {
+    config: WebhookConfig,
+}
+
+impl WebhookNotifier {
+    pub fn new(config: WebhookConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl AlertNotifier for WebhookNotifier {
+    fn notify(&self, alert: &Alert, state_change: bool) -> Result<(), String> {
+        if !state_change {
+            return Ok(());
+        }
+
+        let payload = serde_json::json!({
+            "name": alert.name,
+            "state": format!("{:?}", alert.state),
+            "value": alert.value,
+            "labels": alert.labels,
+            "annotations": alert.annotations,
+            "active_at": alert.active_at.map(|t| {
+                t.duration_since(UNIX_EPOCH).unwrap().as_secs()
+            }),
+        });
+
+        println!(
+            "[WEBHOOK] Sending to {}\nPayload: {}",
+            self.config.url,
+            serde_json::to_string_pretty(&payload).unwrap()
+        );
+
+        Ok(())
     }
 }

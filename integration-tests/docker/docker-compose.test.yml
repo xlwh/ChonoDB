@@ -1,0 +1,140 @@
+version: '3.8'
+
+services:
+  chronodb:
+    image: chronodb:latest
+    container_name: chronodb-test
+    ports:
+      - "9090:9090"
+      - "9091:9091"
+    volumes:
+      - chronodb-data:/var/lib/chronodb
+      - chronodb-logs:/var/log/chronodb
+      - ./chronodb/chronodb.yaml:/etc/chronodb/chronodb.yaml:ro
+    environment:
+      - RUST_LOG=debug
+      - CHRONODB_DATA_DIR=/var/lib/chronodb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - test-network
+
+  chronodb-agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    image: prom-agent:latest
+    container_name: chronodb-agent
+    depends_on:
+      - chronodb
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - ./agent/chronodb-agent.yaml:/etc/prometheus/agent/chronodb-agent.yaml:ro
+    command:
+      - '--config.file=/etc/prometheus/agent/chronodb-agent.yaml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.listen-address=:9090'
+    environment:
+      - NODE_NAME=chronodb
+      - SERVICE_PORT=9090
+    networks:
+      - test-network
+
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: prometheus-test
+    ports:
+      - "9092:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - test-network
+
+  prometheus-agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    image: prom-agent:latest
+    container_name: prometheus-agent
+    depends_on:
+      - prometheus
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - ./agent/prometheus-agent.yaml:/etc/prometheus/agent/prometheus-agent.yaml:ro
+    command:
+      - '--config.file=/etc/prometheus/agent/prometheus-agent.yaml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.listen-address=:9090'
+    environment:
+      - NODE_NAME=prometheus
+      - SERVICE_PORT=9090
+    networks:
+      - test-network
+
+  monitoring-prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: monitoring-prometheus
+    ports:
+      - "9093:9090"
+    volumes:
+      - ./prometheus/monitoring-prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - monitoring-prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-remote-write-receiver'
+      - '--web.enable-lifecycle'
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - test-network
+
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: grafana-test
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - test-network
+
+volumes:
+  chronodb-data:
+  chronodb-logs:
+  prometheus-data:
+  monitoring-prometheus-data:
+  grafana-data:
+
+networks:
+  test-network:
+    driver: bridge

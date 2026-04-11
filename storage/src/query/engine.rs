@@ -2,6 +2,7 @@ use crate::error::Result;
 use crate::model::TimeSeries;
 use crate::query::planner::QueryPlanner;
 use crate::query::executor::QueryExecutor;
+use crate::query::cache::{CacheConfig, CacheStats};
 use crate::memstore::MemStore;
 use std::sync::Arc;
 
@@ -53,10 +54,19 @@ impl QueryEngine {
         }
     }
 
+    pub fn with_cache(memstore: Arc<MemStore>, cache_config: CacheConfig) -> Self {
+        let executor = QueryExecutor::with_cache(memstore.clone(), cache_config);
+        Self {
+            memstore,
+            planner: QueryPlanner::new(),
+            executor,
+        }
+    }
+
     pub async fn query(&self, query: &str, start: i64, end: i64, step: i64) -> Result<QueryResult> {
         let expr = crate::query::parse_promql(query)?;
         let plan = self.planner.plan(&expr, start, end, step)?;
-        let result = self.executor.execute(&plan).await?;
+        let result = self.executor.execute_with_query(&plan, Some(query)).await?;
         Ok(result)
     }
 
@@ -66,6 +76,14 @@ impl QueryEngine {
 
     pub async fn query_instant(&self, query: &str, timestamp: i64) -> Result<QueryResult> {
         self.query(query, timestamp, timestamp, 0).await
+    }
+
+    pub fn cache_stats(&self) -> Option<CacheStats> {
+        self.executor.cache_stats()
+    }
+
+    pub fn clear_cache(&self) {
+        self.executor.clear_cache();
     }
 }
 

@@ -1,5 +1,5 @@
 use axum::{
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use std::sync::Arc;
@@ -9,9 +9,12 @@ pub mod handlers;
 pub mod models;
 pub mod response;
 pub mod opentsdb;
+pub mod admin;
 
 use handlers::*;
 use crate::remote_server;
+use admin::*;
+use crate::static_files;
 
 pub fn create_routes(state: Arc<ServerState>) -> Router {
     Router::new()
@@ -31,5 +34,18 @@ pub fn create_routes(state: Arc<ServerState>) -> Router {
         .route("/-/ready", get(handle_ready))
         .route("/api/v1/status/runtimeinfo", get(handle_runtime_info))
         .route("/api/v1/status/buildinfo", get(handle_build_info))
+        .route("/api/admin/data/put", post(handle_data_put))
+        .route("/api/admin/data/batch", post(handle_batch_data_put))
+        .route("/api/admin/stats/storage", get(handle_stats_storage))
+        .route("/api/admin/stats/query", get(handle_stats_query))
+        .route("/api/admin/stats/memory", get(handle_stats_memory))
+        .route("/api/admin/config", get(handle_config_get).put(handle_config_put))
+        .route("/api/admin/cluster/nodes", get(handle_cluster_nodes))
+        .route("/api/admin/cluster/shards", get(handle_cluster_shards))
+        .route("/api/admin/alerts/rules", get(handle_alerts_rules_get).post(handle_alerts_rules_post))
+        .route("/api/admin/alerts/firing", get(handle_alerts_firing))
+        .route("/ui", get(static_files::index_handler))
+        .route("/ui/", get(static_files::index_handler))
+        .fallback(static_files::static_handler)
         .with_state(state)
 }

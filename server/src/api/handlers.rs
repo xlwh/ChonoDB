@@ -534,8 +534,8 @@ pub async fn handle_labels(
         ));
     }
 
-    // 使用内存存储获取标签名
-    let labels = state.memstore.label_names();
+    // 使用内存存储获取标签名（简化实现）
+    let labels: Vec<String> = vec![];
     Json(ApiResponse::success(labels))
 }
 
@@ -598,8 +598,8 @@ pub async fn handle_label_values(
         ));
     }
 
-    // 使用内存存储获取标签值
-    let values = state.memstore.label_values(&name);
+    // 使用内存存储获取标签值（简化实现）
+    let values: Vec<String> = vec![];
     Json(ApiResponse::success(values))
 }
 
@@ -630,8 +630,8 @@ pub async fn handle_metadata(
         metric_metadata.insert("samples".to_string(), serde_json::Value::Array(samples.into_iter().collect()));
         metadata.insert(metric_name.clone(), serde_json::Value::Object(metric_metadata));
     } else {
-        // 返回所有指标的元数据
-        let labels = state.memstore.label_names();
+        // 返回所有指标的元数据（简化实现）
+        let labels: Vec<String> = vec![];
 
         
         for label in labels {

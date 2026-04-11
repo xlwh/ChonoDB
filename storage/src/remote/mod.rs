@@ -1,6 +1,7 @@
 pub mod write;
 pub mod read;
 pub mod codec;
+pub mod prompb;
 
 pub use write::{RemoteWriter, WriteRequest, WriteResponse};
 pub use read::{RemoteReader, ReadRequest, ReadResponse};
