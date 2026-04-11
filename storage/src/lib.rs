@@ -25,6 +25,7 @@ pub mod raft;
 pub mod metadata;
 pub mod backup;
 pub mod fault_injection;
+pub mod migration;
 
 pub use error::{Error, Result};
 pub use model::{Label, Labels, Sample, TimeSeries, TimeSeriesId};
@@ -33,3 +34,4 @@ pub use config::StorageConfig;
 pub use storage::{ObjectStorage, BackendType, StorageOptions, ObjectMetadata};
 pub use storage::{LocalStorage, S3Storage, GcsStorage};
 pub use export::{ExportData, ExportFormat, ExportTimeSeries, ExportSample, ExportMetadata};
+pub use migration::{DataMigrator, MigrationConfig, MigrationStats, DataSourceType};
