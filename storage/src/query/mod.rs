@@ -7,6 +7,7 @@ pub mod parallel;
 pub mod downsample_router;
 pub mod optimizer;
 pub mod cost_optimizer;
+pub mod frequency;
 
 pub use parser::parse_promql;
 pub use parser::Expr;
@@ -18,3 +19,4 @@ pub use parallel::{ParallelQueryExecutor, ParallelConfig, ParallelContext};
 pub use downsample_router::{DownsampleRouter, DownsampleRoute, DownsamplePolicy, DownsampleQueryExecutor};
 pub use optimizer::{QueryOptimizer, OptimizationStats};
 pub use cost_optimizer::{CostBasedOptimizer, OptimizerConfig, StatsManager, CostModel, OptimizationRule};
+pub use frequency::{FrequencyTracker, FrequencyConfig, normalize_query, extract_query_pattern, QueryPattern};
