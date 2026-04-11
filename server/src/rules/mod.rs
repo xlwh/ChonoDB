@@ -32,11 +32,13 @@ pub mod alerting;
 pub mod recording;
 pub mod evaluator;
 pub mod pre_aggregation;
+pub mod scheduler;
 
 pub use alerting::{AlertRule, AlertState, Alert, AlertManager, AlertCondition};
 pub use recording::{RecordingRule, RecordingManager};
 pub use evaluator::RuleEvaluator;
 pub use pre_aggregation::{PreAggregationManager, PreAggregationManagerConfig, RuleUpdates};
+pub use scheduler::{PreAggregationScheduler, SchedulerConfig, SchedulerStats, TaskStatus, TaskState};
 
 /// 规则文件
 #[derive(Debug, Clone, Serialize, Deserialize)]

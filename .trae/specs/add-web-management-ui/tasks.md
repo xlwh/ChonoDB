@@ -197,7 +197,7 @@
   - `human-judgement` TR-12.4: 在主流浏览器中正常显示
 - **Notes**: 使用 Chrome DevTools 进行性能分析
 
-## [ ] 任务 13: 文档和部署
+## [x] 任务 13: 文档和部署
 - **Priority**: P2
 - **Depends On**: 任务 12
 - **Description**:
