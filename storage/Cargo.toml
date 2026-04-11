@@ -41,6 +41,7 @@ walkdir = "2.3"
 [dev-dependencies]
 tempfile.workspace = true
 criterion.workspace = true
+futures.workspace = true
 
 [features]
 default = []

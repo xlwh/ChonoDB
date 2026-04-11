@@ -44,6 +44,7 @@ num_cpus = "1.16"
 serde_yaml = "0.9"
 async-trait = "0.1"
 reqwest = { version = "0.11", features = ["json"] }
+futures = "0.3"
 aws-sdk-s3 = "1.0"
 aws-config = "1.0"
 aws-credential-types = "1.0"
