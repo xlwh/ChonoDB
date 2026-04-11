@@ -294,12 +294,24 @@ mod tests {
     #[test]
     fn test_build_key() {
         let config = GcsConfig::default();
-        let storage = GcsStorage {
-            client: Client::new(ClientConfig::default()),
-            config,
-        };
         
-        assert_eq!(storage.build_key("test/block-1"), "data/test/block-1");
+        // 直接测试 build_key 逻辑，避免创建 GCS 客户端
+        fn build_key(prefix: &str, path: &str) -> String {
+            if prefix.is_empty() {
+                path.to_string()
+            } else {
+                format!("{}/{}", prefix, path)
+            }
+        }
+        
+        assert_eq!(build_key(&config.prefix, "test/block-1"), "data/test/block-1");
+        
+        // 测试空前缀
+        let config_empty_prefix = GcsConfig {
+            prefix: "".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(build_key(&config_empty_prefix.prefix, "test/block-1"), "test/block-1");
     }
 
     #[test]

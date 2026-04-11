@@ -169,10 +169,24 @@ impl BatchExportManager {
         tasks: Arc<tokio::sync::RwLock<std::collections::HashMap<String, BatchExportTask>>>,
     ) {
         while let Some(mut task) = receiver.recv().await {
+            // 检查任务是否已被取消
+            {
+                let tasks_read = tasks.read().await;
+                if let Some(t) = tasks_read.get(&task.task_id) {
+                    if t.status == ExportStatus::Cancelled {
+                        continue; // 任务已被取消，跳过执行
+                    }
+                }
+            }
+            
             // 更新任务状态为运行中
             {
                 let mut tasks_write = tasks.write().await;
                 if let Some(t) = tasks_write.get_mut(&task.task_id) {
+                    // 再次检查，防止在获取写锁期间被取消
+                    if t.status == ExportStatus::Cancelled {
+                        continue;
+                    }
                     t.status = ExportStatus::Running;
                     t.progress = 0.1;
                 }
@@ -185,6 +199,11 @@ impl BatchExportManager {
             {
                 let mut tasks_write = tasks.write().await;
                 if let Some(t) = tasks_write.get_mut(&task.task_id) {
+                    // 如果任务已被取消，不要覆盖状态
+                    if t.status == ExportStatus::Cancelled {
+                        continue;
+                    }
+                    
                     match result {
                         Ok(_) => {
                             t.status = ExportStatus::Completed;

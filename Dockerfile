@@ -16,19 +16,22 @@ COPY Cargo.toml Cargo.lock ./
 COPY storage/Cargo.toml storage/
 COPY server/Cargo.toml server/
 COPY chronodb-cli/Cargo.toml chronodb-cli/
+COPY perf-test/Cargo.toml perf-test/
 
 # 创建虚拟 main.rs 以缓存依赖
-RUN mkdir -p storage/src server/src chronodb-cli/src && \
+RUN mkdir -p storage/src server/src chronodb-cli/src perf-test/src && \
     echo "fn main() {}" > storage/src/lib.rs && \
     echo "fn main() {}" > server/src/main.rs && \
     echo "fn main() {}" > chronodb-cli/src/main.rs && \
+    echo "fn main() {}" > perf-test/src/main.rs && \
     cargo build --release && \
-    rm -rf storage/src server/src chronodb-cli/src
+    rm -rf storage/src server/src chronodb-cli/src perf-test/src
 
 # 复制源代码
 COPY storage/src storage/src/
 COPY server/src server/src/
 COPY chronodb-cli/src chronodb-cli/src/
+COPY perf-test/src perf-test/src/
 
 # 构建
 RUN cargo build --release

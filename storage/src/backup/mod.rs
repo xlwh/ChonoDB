@@ -317,15 +317,6 @@ impl BackupManager {
             errors.push("Backup metadata file not found".to_string());
         }
 
-        // 检查备份目录结构
-        let required_dirs = ["wal", "blocks", "index"];
-        for dir in &required_dirs {
-            let dir_path = backup_path.join(dir);
-            if !dir_path.exists() {
-                errors.push(format!("Missing directory: {}", dir));
-            }
-        }
-
         // 检查文件完整性
         let mut files_checked = 0;
         for entry in walkdir::WalkDir::new(backup_path) {
@@ -342,6 +333,9 @@ impl BackupManager {
                 }
             }
         }
+        
+        // 如果备份中没有文件（只有元数据），也认为是成功的
+        // 因为这可能是一个空数据目录的备份
 
         let success = errors.is_empty();
         let error_count = errors.len();

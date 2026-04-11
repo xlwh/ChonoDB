@@ -37,8 +37,11 @@ pub struct ServerState {
 
 impl ServerState {
     pub async fn new(config: ServerConfig) -> crate::Result<Arc<Self>> {
-        // 创建内存存储
-        let storage_config = StorageConfig::default();
+        // 创建内存存储 - 使用配置中的 data_dir
+        let storage_config = StorageConfig {
+            data_dir: config.data_dir.to_string_lossy().to_string(),
+            ..StorageConfig::default()
+        };
         let memstore = Arc::new(MemStore::new(storage_config)?);
         
         // 创建规则管理器

@@ -71,21 +71,90 @@ impl MemStore {
             DEFAULT_BLOOM_FALSE_POSITIVE_RATE,
         ));
         
-        let wal = if Path::new(&config.data_dir).exists() {
-            let wal_path = Path::new(&config.data_dir).join("wal");
-            Some(Arc::new(Wal::new(wal_path)?))
-        } else {
-            None
-        };
+        // 确保数据目录存在
+        let data_dir = Path::new(&config.data_dir);
+        if !data_dir.exists() {
+            std::fs::create_dir_all(data_dir)?;
+        }
         
-        Ok(Self {
-            head,
+        // 创建 WAL
+        let wal_path = data_dir.join("wal");
+        let wal = Some(Arc::new(Wal::new(&wal_path)?));
+        
+        // 创建 MemStore 实例
+        let memstore = Self {
+            head: head.clone(),
             bloom,
-            wal,
+            wal: wal.clone(),
             config,
             stats: RwLock::new(MemStoreStats::default()),
             write_buffer: RwLock::new(WriteBuffer::default()),
-        })
+        };
+        
+        // 从 WAL 恢复数据
+        if let Err(e) = memstore.recover_from_wal(&wal_path) {
+            tracing::warn!("Failed to recover from WAL: {}", e);
+        }
+        
+        Ok(memstore)
+    }
+    
+    /// 从 WAL 恢复数据
+    fn recover_from_wal(&self, wal_path: &Path) -> Result<()> {
+        use crate::wal::{WalReader, WalEntryType};
+        
+        if !wal_path.exists() {
+            tracing::info!("WAL path does not exist, skipping recovery");
+            return Ok(());
+        }
+        
+        let reader = WalReader::new(wal_path)?;
+        
+        if reader.segment_count() == 0 {
+            tracing::info!("No WAL segments found, skipping recovery");
+            return Ok(());
+        }
+        
+        tracing::info!("Starting WAL recovery from {} segments", reader.segment_count());
+        
+        let entries = reader.read_all()?;
+        let mut recovered_series = 0;
+        let mut recovered_samples = 0;
+        
+        for entry in entries {
+            match entry.entry_type {
+                WalEntryType::Write => {
+                    if let Some(labels) = entry.labels {
+                        // 恢复系列到 head
+                        let actual_series_id = self.head.get_or_create_series(labels)?;
+                        
+                        // 写入样本
+                        for sample in entry.samples {
+                            self.head.add_sample(actual_series_id, sample)?;
+                            recovered_samples += 1;
+                        }
+                        recovered_series += 1;
+                    }
+                }
+                WalEntryType::Delete => {
+                    // 处理删除操作
+                    tracing::debug!("WAL recovery: skipping delete for series {}", entry.series_id);
+                }
+                _ => {}
+            }
+        }
+        
+        tracing::info!("WAL recovery completed: {} series, {} samples recovered", 
+                      recovered_series, recovered_samples);
+        
+        // 更新统计信息
+        {
+            let mut stats = self.stats.write();
+            stats.total_series += recovered_series as u64;
+            stats.total_samples += recovered_samples as u64;
+        }
+        
+        Ok(())
     }
 
     pub fn write(&self, labels: Labels, samples: Vec<Sample>) -> Result<()> {
@@ -221,6 +290,9 @@ impl MemStore {
         end: i64,
         _level: DownsampleLevel,
     ) -> Result<Vec<TimeSeries>> {
+        // 先刷新缓冲区，确保查询结果包含最新数据
+        self.flush()?;
+        
         let series_ids = self.find_series(label_matchers)?;
         
         let mut result = Vec::with_capacity(series_ids.len());
@@ -245,9 +317,31 @@ impl MemStore {
 
     // 公开方法，供其他模块使用
     pub fn find_series(&self, label_matchers: &[(String, String)]) -> Result<Vec<TimeSeriesId>> {
-        // 简化实现，实际应该使用索引
-        // 这里返回所有系列，实际应该根据匹配器过滤
-        Ok(self.get_all_series_ids())
+        // 先刷新缓冲区，确保查询结果包含最新数据
+        self.flush()?;
+        
+        if label_matchers.is_empty() {
+            return Ok(self.get_all_series_ids());
+        }
+        
+        // 获取所有系列并根据标签匹配器过滤
+        let all_series_ids = self.get_all_series_ids();
+        let mut matched_ids = Vec::new();
+        
+        for series_id in all_series_ids {
+            if let Some(labels) = self.head.get_series_labels(series_id) {
+                // 检查所有匹配器是否都满足
+                let all_match = label_matchers.iter().all(|(name, value)| {
+                    labels.iter().any(|label| label.name == *name && label.value == *value)
+                });
+                
+                if all_match {
+                    matched_ids.push(series_id);
+                }
+            }
+        }
+        
+        Ok(matched_ids)
     }
 
     // 公开方法，供其他模块使用
