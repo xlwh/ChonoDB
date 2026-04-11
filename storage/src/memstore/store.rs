@@ -282,4 +282,23 @@ impl MemStore {
     pub fn total_samples(&self) -> usize {
         self.head.total_samples()
     }
+
+    /// 获取所有标签名（简化实现）
+    pub fn label_names(&self) -> Vec<String> {
+        // 简化实现，实际应该从索引中获取
+        vec![]
+    }
+
+    /// 获取指定标签的所有值（简化实现）
+    pub fn label_values(&self, _label_name: &str) -> Vec<String> {
+        // 简化实现，实际应该从索引中获取
+        vec![]
+    }
+
+    /// 关闭存储（简化实现）
+    pub fn close(&self) -> Result<()> {
+        // 刷新缓冲区
+        self.flush()?;
+        Ok(())
+    }
 }
