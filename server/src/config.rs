@@ -36,6 +36,10 @@ pub struct ServerConfig {
     /// 预聚合配置
     #[serde(default)]
     pub pre_aggregation: PreAggregationConfig,
+    
+    /// 降采样配置
+    #[serde(default)]
+    pub downsampling: DownsamplingConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,6 +235,7 @@ impl Default for ServerConfig {
                 output: Some(PathBuf::from("/var/log/chronodb/chronodb.log")),
             },
             pre_aggregation: PreAggregationConfig::default(),
+            downsampling: DownsamplingConfig::default(),
         }
     }
 }
@@ -357,6 +362,69 @@ impl Default for PreAggregationStorageConfig {
             retention_days: 30,
             max_storage_gb: 100,
             compression: "zstd".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownsamplingConfig {
+    /// 是否启用降采样
+    pub enabled: bool,
+    
+    /// 降采样间隔（秒）
+    pub interval: u64,
+    
+    /// 并发数
+    pub concurrency: usize,
+    
+    /// 任务超时（秒）
+    pub timeout: u64,
+    
+    /// 降采样级别配置
+    pub levels: Vec<DownsamplingLevelConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownsamplingLevelConfig {
+    /// 降采样级别
+    pub level: String,
+    
+    /// 是否启用
+    pub enabled: bool,
+    
+    /// 降采样函数
+    pub functions: Vec<String>,
+}
+
+impl Default for DownsamplingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval: 900, // 15分钟
+            concurrency: 4,
+            timeout: 3600, // 1小时
+            levels: vec![
+                DownsamplingLevelConfig {
+                    level: "L1".to_string(),
+                    enabled: true,
+                    functions: vec!["min", "max", "avg", "sum", "count", "last"].into_iter().map(String::from).collect(),
+                },
+                DownsamplingLevelConfig {
+                    level: "L2".to_string(),
+                    enabled: true,
+                    functions: vec!["min", "max", "avg", "sum", "count", "last"].into_iter().map(String::from).collect(),
+                },
+                DownsamplingLevelConfig {
+                    level: "L3".to_string(),
+                    enabled: true,
+                    functions: vec!["min", "max", "avg", "sum", "count", "last"].into_iter().map(String::from).collect(),
+                },
+                DownsamplingLevelConfig {
+                    level: "L4".to_string(),
+                    enabled: true,
+                    functions: vec!["min", "max", "avg", "sum", "count", "last"].into_iter().map(String::from).collect(),
+                },
+            ],
         }
     }
 }

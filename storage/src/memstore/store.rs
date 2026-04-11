@@ -217,7 +217,7 @@ impl MemStore {
         Sample::new(window_timestamp, avg)
     }
 
-    fn find_series(&self, matchers: &[(String, String)]) -> Result<Vec<TimeSeriesId>> {
+    pub fn find_series(&self, matchers: &[(String, String)]) -> Result<Vec<TimeSeriesId>> {
         if matchers.is_empty() {
             return Ok(self.all_series_ids());
         }

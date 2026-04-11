@@ -9,6 +9,14 @@ use tracing::{debug, error, info, warn};
 
 use crate::state::ServerState;
 use chronodb_storage::model::{Label, Sample};
+use chronodb_storage::remote::prompb::remote::{
+    WriteRequest as PromWriteRequest,
+    ReadRequest as PromReadRequest,
+    ReadResponse as PromReadResponse,
+    TimeSeries as PromTimeSeries,
+    Sample as PromSample,
+    Label as PromLabel,
+};
 use chronodb_storage::remote::{
     ProtoCodec, RemoteWriteRequest, SnappyCodec,
 };
@@ -101,17 +109,24 @@ fn process_protobuf_write(
     let decompressed = SnappyCodec::decompress(body)
         .map_err(|e| format!("Snappy decompression failed: {}", e))?;
 
-    let request: RemoteWriteRequest = ProtoCodec::decode(&decompressed)
+    let request: PromWriteRequest = ProtoCodec::decode_write_request(&decompressed)
         .map_err(|e| format!("Protobuf decode failed: {}", e))?;
 
     let series_count = request.timeseries.len();
     let mut total_samples = 0;
 
     for remote_series in request.timeseries {
-        let series: chronodb_storage::model::TimeSeries = remote_series.into();
-        total_samples += series.samples.len();
+        let labels: Vec<Label> = remote_series.labels.into_iter()
+            .map(|l| Label::new(l.name, l.value))
+            .collect();
 
-        if let Err(e) = state.memstore.write(series.labels.to_vec(), series.samples) {
+        let samples: Vec<Sample> = remote_series.samples.into_iter()
+            .map(|s| Sample::new(s.timestamp, s.value))
+            .collect();
+
+        total_samples += samples.len();
+
+        if let Err(e) = state.memstore.write(labels, samples) {
             warn!("Failed to write time series: {}", e);
         }
     }
@@ -257,7 +272,7 @@ pub async fn handle_remote_read(
         }
     };
 
-    let request: chronodb_storage::remote::RemoteReadRequest = match ProtoCodec::decode(&decompressed)
+    let request: PromReadRequest = match ProtoCodec::decode_read_request(&decompressed)
     {
         Ok(req) => req,
         Err(e) => {
@@ -275,16 +290,13 @@ pub async fn handle_remote_read(
         request.queries.len()
     );
 
-    let mut results = Vec::new();
+    let mut query_results = Vec::new();
     for query in request.queries {
         let matchers: Vec<(String, String)> = query
             .matchers
             .iter()
             .filter(|m| {
-                matches!(
-                    m.matcher_type,
-                    chronodb_storage::remote::MatcherType::Equal
-                )
+                m.r#type == chronodb_storage::remote::prompb::remote::MatchType::Equal as i32
             })
             .map(|m| (m.name.clone(), m.value.clone()))
             .collect();
@@ -294,26 +306,47 @@ pub async fn handle_remote_read(
             .query(&matchers, query.start_timestamp_ms, query.end_timestamp_ms)
         {
             Ok(series_list) => {
-                let remote_series: Vec<chronodb_storage::remote::RemoteTimeSeries> =
-                    series_list.into_iter().map(|ts| ts.into()).collect();
+                let remote_series: Vec<PromTimeSeries> = series_list.into_iter().map(|ts| {
+                    let labels: Vec<PromLabel> = ts.labels.into_iter()
+                        .map(|l| PromLabel {
+                            name: l.name,
+                            value: l.value,
+                        })
+                        .collect();
 
-                results.push(chronodb_storage::remote::RemoteQueryResult {
+                    let samples: Vec<PromSample> = ts.samples.into_iter()
+                        .map(|s| PromSample {
+                            timestamp: s.timestamp,
+                            value: s.value,
+                        })
+                        .collect();
+
+                    PromTimeSeries {
+                        labels,
+                        samples,
+                        exemplars: Vec::new(),
+                    }
+                }).collect();
+
+                query_results.push(chronodb_storage::remote::prompb::remote::QueryResult {
                     timeseries: remote_series,
                 });
             }
             Err(e) => {
                 error!("Query error: {}", e);
-                results.push(chronodb_storage::remote::RemoteQueryResult {
+                query_results.push(chronodb_storage::remote::prompb::remote::QueryResult {
                     timeseries: Vec::new(),
                 });
             }
         }
     }
 
-    let results_count = results.len();
-    let response = chronodb_storage::remote::RemoteReadResponse { results };
+    let results_count = query_results.len();
+    let response = PromReadResponse {
+        results: query_results,
+    };
 
-    let encoded = match ProtoCodec::encode(&response) {
+    let encoded = match ProtoCodec::encode_read_response(&response) {
         Ok(data) => data,
         Err(e) => {
             error!("Failed to encode remote read response: {}", e);

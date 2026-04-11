@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// 并行查询执行器
+#[derive(Clone)]
 pub struct ParallelQueryExecutor {
     max_concurrency: usize,
     active_tasks: Arc<AtomicUsize>,

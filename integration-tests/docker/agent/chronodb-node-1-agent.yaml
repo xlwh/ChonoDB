@@ -1,0 +1,39 @@
+agent:
+  log_level: info
+  listen_address: 0.0.0.0:9090
+  metrics_path: /metrics
+
+system_collector:
+  enabled: true
+  collectors:
+    cpu: true
+    memory: true
+    disk: true
+    filesystem: true
+    network: true
+    load: true
+  container_mode: auto
+
+service_scrapers:
+  - id: chronodb-node-1
+    url: http://chronodb-node-1:9090/metrics
+    interval_secs: 15
+    timeout_secs: 5
+    labels:
+      service: chronodb
+      node: chronodb-node-1
+      node_id: "1"
+      environment: distributed-test
+
+remote_write:
+  endpoints:
+    - name: monitoring
+      endpoint: http://monitoring-prometheus:9090/api/v1/write
+      priority: 1
+      enabled: true
+  queue_config:
+    capacity: 10000
+    max_shards: 5
+    max_samples_per_send: 1000
+    batch_send_deadline_secs: 5
+    max_retries: 3

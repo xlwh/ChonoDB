@@ -1,0 +1,13 @@
+# Grafana 仪表板配置
+
+apiVersion: 1
+
+providers:
+  - name: 'ChronoDB Dashboards'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards

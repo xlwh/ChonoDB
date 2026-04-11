@@ -1,0 +1,52 @@
+listen_address: "0.0.0.0"
+port: 9090
+data_dir: "/var/lib/chronodb"
+
+storage:
+  mode: "standalone"
+  backend: "local"
+  local_path: "/var/lib/chronodb/data"
+  max_disk_usage: "90%"
+
+query:
+  max_concurrent: 100
+  timeout: 120
+  max_samples: 50000000
+  enable_vectorized: true
+  enable_parallel: true
+  enable_auto_downsampling: true
+  downsample_policy: "auto"
+  query_cache_size: "512MB"
+  enable_query_cache: true
+  query_cache_ttl: 300
+
+rules:
+  rule_files: []
+  evaluation_interval: 60
+  alert_send_interval: 60
+
+targets:
+  scrape_interval: 60
+  scrape_timeout: 10
+
+memory:
+  memstore_size: "1GB"
+  wal_size: "256MB"
+  query_cache_size: "512MB"
+  max_memory_usage: "80%"
+
+compression:
+  time_column:
+    algorithm: "zstd"
+    level: 3
+  value_column:
+    algorithm: "zstd"
+    level: 3
+    use_prediction: true
+  label_column:
+    algorithm: "dictionary"
+    level: 0
+
+log:
+  level: "info"
+  format: "text"

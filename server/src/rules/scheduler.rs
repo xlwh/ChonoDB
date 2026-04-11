@@ -144,7 +144,6 @@ impl PreAggregationScheduler {
             .query(&rule.expr, start, end, step)
             .await?;
         
-        let mut data = self.data_store.write();
         let aggregated_data = result.series.iter()
             .flat_map(|series| {
                 series.samples.iter().map(|sample| {
@@ -160,7 +159,10 @@ impl PreAggregationScheduler {
             })
             .collect();
         
-        data.insert(rule.id.clone(), aggregated_data);
+        {            
+            let mut data = self.data_store.write();
+            data.insert(rule.id.clone(), aggregated_data);
+        }
         
         if let Some(coordinator) = &self.distributed_coordinator {
             coordinator.update_task_status(&rule.id, DistributedTaskStatus::Completed).await?;
