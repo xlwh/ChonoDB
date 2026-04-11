@@ -3,12 +3,14 @@ pub mod coordinator;
 pub mod replication;
 pub mod cluster;
 pub mod query_coordinator;
+pub mod preagg_coordinator;
 
 pub use shard::{ShardManager, Shard, ShardConfig, ShardPlacement};
 pub use coordinator::{Coordinator, CoordinatorConfig, QueryRouter};
 pub use replication::{ReplicationManager, ReplicationConfig, ReplicaPlacement};
 pub use cluster::{ClusterManager, ClusterConfig, NodeInfo, NodeStatus};
 pub use query_coordinator::{QueryCoordinator, CoordinatorConfig as QueryCoordinatorConfig, ShardManager as QueryShardManager, AggregationType};
+pub use preagg_coordinator::{DistributedPreAggregationCoordinator, DistributedPreAggregationConfig, TaskAssignment, TaskStatus, CoordinationStats};
 
 use crate::error::Result;
 use crate::model::{TimeSeries, TimeSeriesId, Labels, Sample};

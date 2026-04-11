@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use parking_lot::RwLock;
 use tokio::time::{interval, Duration};
 use chrono::Utc;
-use tracing::{info, warn, error};
+use tracing::{info, warn, error, debug};
 use chronodb_storage::model::{PreAggregationRule, RuleStatus, DataLocation};
 use chronodb_storage::query::QueryEngine;
+use chronodb_storage::distributed::{DistributedPreAggregationCoordinator, TaskStatus as DistributedTaskStatus};
 use crate::error::Result;
 
 pub struct PreAggregationScheduler {
@@ -13,6 +14,8 @@ pub struct PreAggregationScheduler {
     query_engine: Arc<QueryEngine>,
     data_store: Arc<RwLock<HashMap<String, Vec<PreAggregatedData>>>>,
     config: SchedulerConfig,
+    distributed_coordinator: Option<Arc<DistributedPreAggregationCoordinator>>,
+    node_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +71,8 @@ impl PreAggregationScheduler {
             query_engine,
             data_store: Arc::new(RwLock::new(HashMap::new())),
             config: SchedulerConfig::default(),
+            distributed_coordinator: None,
+            node_id: uuid::Uuid::new_v4().to_string(),
         }
     }
 
@@ -80,6 +85,24 @@ impl PreAggregationScheduler {
             query_engine,
             data_store: Arc::new(RwLock::new(HashMap::new())),
             config,
+            distributed_coordinator: None,
+            node_id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+
+    pub fn with_distributed(
+        query_engine: Arc<QueryEngine>,
+        config: SchedulerConfig,
+        coordinator: Arc<DistributedPreAggregationCoordinator>,
+        node_id: String,
+    ) -> Self {
+        Self {
+            rules: Arc::new(RwLock::new(HashMap::new())),
+            query_engine,
+            data_store: Arc::new(RwLock::new(HashMap::new())),
+            config,
+            distributed_coordinator: Some(coordinator),
+            node_id,
         }
     }
 
@@ -97,7 +120,20 @@ impl PreAggregationScheduler {
     }
 
     pub async fn execute_task(&self, rule: &PreAggregationRule) -> Result<()> {
+        if let Some(coordinator) = &self.distributed_coordinator {
+            if let Some(assignment) = coordinator.get_task_assignment(&rule.id).await {
+                if assignment.assigned_node != self.node_id {
+                    debug!("Skipping task {} - assigned to node {}", rule.id, assignment.assigned_node);
+                    return Ok(());
+                }
+            }
+        }
+
         info!("Executing pre-aggregation task for rule: {}", rule.name);
+
+        if let Some(coordinator) = &self.distributed_coordinator {
+            coordinator.update_task_status(&rule.id, DistributedTaskStatus::Running).await?;
+        }
         
         let now = Utc::now().timestamp_millis();
         let start = now - (rule.evaluation_interval as i64 * 1000 * 2);
@@ -126,6 +162,10 @@ impl PreAggregationScheduler {
         
         data.insert(rule.id.clone(), aggregated_data);
         
+        if let Some(coordinator) = &self.distributed_coordinator {
+            coordinator.update_task_status(&rule.id, DistributedTaskStatus::Completed).await?;
+        }
+        
         info!("Pre-aggregation task completed for rule: {}", rule.name);
         
         Ok(())
@@ -133,15 +173,33 @@ impl PreAggregationScheduler {
 
     pub async fn start(&self) {
         let mut ticker = interval(Duration::from_secs(60));
+        let mut heartbeat_ticker = interval(Duration::from_secs(10));
         
         loop {
-            ticker.tick().await;
-            
-            let rules = self.get_active_rules();
-            
-            for rule in rules {
-                if let Err(e) = self.execute_task(&rule).await {
-                    error!("Failed to execute task for rule {}: {:?}", rule.name, e);
+            tokio::select! {
+                _ = ticker.tick() => {
+                    let rules = self.get_active_rules();
+                    
+                    for rule in rules {
+                        if let Err(e) = self.execute_task(&rule).await {
+                            error!("Failed to execute task for rule {}: {:?}", rule.name, e);
+                            
+                            if let Some(coordinator) = &self.distributed_coordinator {
+                                let _ = coordinator.update_task_status(&rule.id, DistributedTaskStatus::Failed).await;
+                            }
+                        }
+                    }
+                }
+                
+                _ = heartbeat_ticker.tick() => {
+                    if let Some(coordinator) = &self.distributed_coordinator {
+                        let rules = self.get_active_rules();
+                        for rule in rules {
+                            if let Err(e) = coordinator.heartbeat(&rule.id).await {
+                                warn!("Failed to send heartbeat for task {}: {:?}", rule.id, e);
+                            }
+                        }
+                    }
                 }
             }
         }
