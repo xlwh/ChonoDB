@@ -15,7 +15,8 @@ pub struct FlushManager {
     tx: mpsc::Sender<FlushCommand>,
 }
 
-enum FlushCommand {
+#[derive(Debug)]
+pub enum FlushCommand {
     Flush,
     Shutdown,
 }
@@ -108,13 +109,13 @@ impl FlushManager {
         Ok(())
     }
 
-    async fn flush_memstore(&self, memstore: &Arc<MemStore>) -> Result<FlushedBlockInfo> {
+    pub async fn flush_memstore(&self, memstore: &Arc<MemStore>) -> Result<FlushedBlockInfo> {
         let block_id = self.generate_block_id();
-        let block_dir = self.data_dir.join("blocks").join(block_id.to_string());
+        let blocks_dir = self.data_dir.join("blocks");
 
-        std::fs::create_dir_all(&block_dir)?;
+        std::fs::create_dir_all(&blocks_dir)?;
 
-        let mut writer = BlockWriter::new(&block_dir, block_id, 3);
+        let mut writer = BlockWriter::new(&blocks_dir, block_id, 3);
 
         let series_ids = memstore.get_all_series_ids();
         let mut total_series = 0u64;
@@ -141,7 +142,7 @@ impl FlushManager {
         }
 
         if total_series == 0 {
-            std::fs::remove_dir_all(&block_dir)?;
+            std::fs::remove_dir_all(&blocks_dir)?;
             return Ok(FlushedBlockInfo {
                 block_id,
                 series_count: 0,
@@ -154,6 +155,8 @@ impl FlushManager {
         let block = writer.write()?;
 
         memstore.flush()?;
+
+        memstore.remove_series_batch(&series_ids)?;
 
         info!(
             "Flushed block {}: {} series, {} samples, time range [{}, {}]",
@@ -372,5 +375,138 @@ mod tests {
         
         assert_eq!(manager.total_blocks(), 0);
         assert_eq!(manager.total_samples(), 0);
+    }
+
+    #[test]
+    fn test_block_manager_add_block() {
+        let temp_dir = tempdir().unwrap();
+        let mut manager = BlockManager::new(temp_dir.path()).unwrap();
+
+        let block_info = BlockInfo {
+            block_id: 1,
+            min_timestamp: 1000,
+            max_timestamp: 2000,
+            series_count: 10,
+            sample_count: 100,
+            compaction_level: 0,
+            path: temp_dir.path().join("blocks/1"),
+        };
+
+        manager.add_block(block_info);
+        assert_eq!(manager.total_blocks(), 1);
+        assert_eq!(manager.total_samples(), 100);
+    }
+
+    #[test]
+    fn test_block_manager_get_block() {
+        let temp_dir = tempdir().unwrap();
+        let mut manager = BlockManager::new(temp_dir.path()).unwrap();
+
+        let block_info = BlockInfo {
+            block_id: 42,
+            min_timestamp: 1000,
+            max_timestamp: 2000,
+            series_count: 5,
+            sample_count: 50,
+            compaction_level: 0,
+            path: temp_dir.path().join("blocks/42"),
+        };
+
+        manager.add_block(block_info);
+        let found = manager.get_block(42);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().series_count, 5);
+
+        let not_found = manager.get_block(99);
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_block_manager_get_blocks_in_time_range() {
+        let temp_dir = tempdir().unwrap();
+        let mut manager = BlockManager::new(temp_dir.path()).unwrap();
+
+        manager.add_block(BlockInfo {
+            block_id: 1,
+            min_timestamp: 1000,
+            max_timestamp: 2000,
+            series_count: 5,
+            sample_count: 50,
+            compaction_level: 0,
+            path: temp_dir.path().join("blocks/1"),
+        });
+
+        manager.add_block(BlockInfo {
+            block_id: 2,
+            min_timestamp: 5000,
+            max_timestamp: 6000,
+            series_count: 3,
+            sample_count: 30,
+            compaction_level: 0,
+            path: temp_dir.path().join("blocks/2"),
+        });
+
+        let blocks = manager.get_blocks_in_time_range(1500, 5500);
+        assert_eq!(blocks.len(), 2);
+
+        let blocks = manager.get_blocks_in_time_range(3000, 4000);
+        assert_eq!(blocks.len(), 0);
+    }
+
+    #[test]
+    fn test_block_manager_get_blocks_for_compaction() {
+        let temp_dir = tempdir().unwrap();
+        let mut manager = BlockManager::new(temp_dir.path()).unwrap();
+
+        manager.add_block(BlockInfo {
+            block_id: 1,
+            min_timestamp: 0,
+            max_timestamp: 0,
+            series_count: 0,
+            sample_count: 0,
+            compaction_level: 0,
+            path: temp_dir.path().join("blocks/1"),
+        });
+
+        manager.add_block(BlockInfo {
+            block_id: 2,
+            min_timestamp: 0,
+            max_timestamp: 0,
+            series_count: 0,
+            sample_count: 0,
+            compaction_level: 2,
+            path: temp_dir.path().join("blocks/2"),
+        });
+
+        let blocks = manager.get_blocks_for_compaction(1);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].block_id, 1);
+    }
+
+    #[test]
+    fn test_flushed_block_info() {
+        let info = FlushedBlockInfo {
+            block_id: 123,
+            series_count: 10,
+            sample_count: 100,
+            min_timestamp: 1000,
+            max_timestamp: 2000,
+        };
+        assert_eq!(info.block_id, 123);
+        assert_eq!(info.series_count, 10);
+    }
+
+    #[test]
+    fn test_flush_manager_new() {
+        let temp_dir = tempdir().unwrap();
+        let (manager, _rx) = FlushManager::new(temp_dir.path(), 1000, 60);
+        assert!(manager.trigger_flush().is_ok());
+    }
+
+    #[test]
+    fn test_flush_manager_shutdown() {
+        let temp_dir = tempdir().unwrap();
+        let (manager, _rx) = FlushManager::new(temp_dir.path(), 1000, 60);
+        assert!(manager.shutdown().is_ok());
     }
 }

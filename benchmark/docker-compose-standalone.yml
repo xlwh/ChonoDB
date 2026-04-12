@@ -1,0 +1,76 @@
+services:
+  chronodb:
+    build:
+      context: ..
+      dockerfile: Dockerfile.local
+    container_name: bench-chronodb
+    ports:
+      - "19090:9090"
+      - "19091:9091"
+    volumes:
+      - chronodb-standalone-data:/var/lib/chronodb
+      - chronodb-standalone-logs:/var/log/chronodb
+      - ./config/chronodb-standalone.yaml:/etc/chronodb/chronodb.yaml:ro
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - bench-network
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: '8G'
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: bench-prometheus
+    ports:
+      - "19092:9090"
+    volumes:
+      - ./config/prometheus-standalone.yaml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-standalone-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--storage.tsdb.retention.size=4GB'
+      - '--web.enable-lifecycle'
+      - '--web.enable-remote-write-receiver'
+      - '--query.max-samples=50000000'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - bench-network
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: '8G'
+
+volumes:
+  chronodb-standalone-data:
+    driver: local
+  chronodb-standalone-logs:
+    driver: local
+  prometheus-standalone-data:
+    driver: local
+
+networks:
+  bench-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16

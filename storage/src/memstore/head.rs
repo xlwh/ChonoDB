@@ -57,13 +57,6 @@ impl TimeSeriesEntry {
         Ok(())
     }
 
-    fn add_samples(&mut self, samples: Vec<Sample>) -> Result<()> {
-        for sample in samples {
-            self.add_sample(sample)?;
-        }
-        Ok(())
-    }
-
     fn samples_in_range(&self, start: i64, end: i64) -> Vec<Sample> {
         let mut samples = Vec::new();
         
@@ -115,16 +108,6 @@ impl HeadBlock {
         }
     }
 
-    pub fn add_samples(&self, series_id: TimeSeriesId, samples: Vec<Sample>) -> Result<()> {
-        let mut series = self.series.write();
-        
-        if let Some(entry) = series.get_mut(&series_id) {
-            entry.add_samples(samples)
-        } else {
-            Err(crate::error::Error::SeriesNotFound(series_id))
-        }
-    }
-
     pub fn get_or_create_series(&self, labels: Labels) -> Result<TimeSeriesId> {
         use crate::model::calculate_series_id;
         
@@ -165,9 +148,62 @@ impl HeadBlock {
         Arc::clone(&self.index)
     }
 
-    // 获取所有系列 ID
-    pub fn get_all_series_ids(&self) -> Vec<TimeSeriesId> {
-        let series = self.series.read();
-        series.keys().cloned().collect()
+    pub fn remove_series(&self, series_id: TimeSeriesId) -> Result<()> {
+        let mut series = self.series.write();
+        if let Some(entry) = series.remove(&series_id) {
+            self.index.remove_series(series_id)?;
+            Ok(())
+        } else {
+            Err(crate::error::Error::SeriesNotFound(series_id))
+        }
+    }
+
+    pub fn remove_series_batch(&self, series_ids: &[TimeSeriesId]) -> Result<()> {
+        let mut series = self.series.write();
+        for &series_id in series_ids {
+            if series.remove(&series_id).is_some() {
+                self.index.remove_series(series_id)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Label;
+
+    #[test]
+    fn test_head_block_basic() {
+        let head = HeadBlock::new(HeadConfig::default());
+        
+        let labels = vec![Label::new("job", "test")];
+        let series_id = head.get_or_create_series(labels.clone()).unwrap();
+        
+        head.add_sample(series_id, Sample::new(1000, 1.0)).unwrap();
+        head.add_sample(series_id, Sample::new(2000, 2.0)).unwrap();
+        
+        let samples = head.query(series_id, 0, 3000).unwrap();
+        assert_eq!(samples.len(), 2);
+    }
+
+    #[test]
+    fn test_head_block_multiple_series() {
+        let head = HeadBlock::new(HeadConfig::default());
+        
+        let labels1 = vec![Label::new("job", "test1")];
+        let labels2 = vec![Label::new("job", "test2")];
+        
+        let id1 = head.get_or_create_series(labels1).unwrap();
+        let id2 = head.get_or_create_series(labels2).unwrap();
+        
+        assert_ne!(id1, id2);
+        
+        head.add_sample(id1, Sample::new(1000, 1.0)).unwrap();
+        head.add_sample(id2, Sample::new(1000, 2.0)).unwrap();
+        
+        assert_eq!(head.series_count(), 2);
+        assert_eq!(head.total_samples(), 2);
     }
 }

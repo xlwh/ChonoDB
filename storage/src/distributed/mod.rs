@@ -71,7 +71,7 @@ impl DistributedConfig {
             is_coordinator: yaml_config.is_coordinator,
             shard_config: ShardConfig::from_yaml_config(&yaml_config.shard, replication_factor),
             replication_config: ReplicationConfig::from_yaml_config(&yaml_config.replication),
-            cluster_config: ClusterConfig::from_yaml_config(&yaml_config.cluster),
+            cluster_config: ClusterConfig::from_yaml_config(&yaml_config.cluster, yaml_config.cluster_name.clone()),
         }
     }
 }
@@ -115,7 +115,7 @@ impl DistributedStorage {
         let query_coordinator = Arc::new(
             QueryCoordinator::new(
                 rpc_manager.clone(),
-                Arc::new(tokio::sync::RwLock::new(QueryShardManager::new(128))),
+                Arc::new(tokio::sync::RwLock::new(QueryShardManager::new(shard_manager.shard_count()))),
                 QueryCoordinatorConfig::default()
             ).with_mem_store(mem_store.clone())
         );
@@ -218,7 +218,7 @@ impl DistributedStorage {
     async fn start_failover_monitor(&self) -> Result<()> {
         let cluster_manager = self.cluster_manager.clone();
         let shard_manager = self.shard_manager.clone();
-        let replication_manager = self.replication_manager.clone();
+        let _replication_manager = self.replication_manager.clone();
         
         let task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
@@ -642,6 +642,7 @@ impl super::rpc::RpcHandler for DistributedRpcHandler {
                                     NodeStatus::Online => super::rpc::NodeStatus::Online,
                                     NodeStatus::Offline => super::rpc::NodeStatus::Offline,
                                     NodeStatus::Degraded => super::rpc::NodeStatus::Suspect,
+                                    NodeStatus::Suspect => super::rpc::NodeStatus::Suspect,
                                 },
                                 last_heartbeat: n.last_heartbeat,
                             })

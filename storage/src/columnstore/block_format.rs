@@ -104,9 +104,10 @@ impl From<u8> for BlockType {
 }
 
 /// Compression Type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum CompressionType {
+    #[default]
     None = 0,
     Zstd = 1,
     Snappy = 2,

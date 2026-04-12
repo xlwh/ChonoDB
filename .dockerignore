@@ -1,0 +1,45 @@
+# Rust build artifacts
+target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+server_log.txt
+
+# Test outputs
+integration_test_reports/
+test_reports/
+integration_test_logs/
+
+# Git
+.git/
+.gitignore
+
+# Documentation (not needed for build)
+docs/
+*.md
+
+# Scripts (not needed for build)
+scripts/
+test_scripts/
+
+# Kubernetes configs (not needed for build)
+k8s/
+
+# Other
+*.yaml
+*.yml
+!config/chronodb.yaml
+!config/prometheus.yml
+!config/alertmanager.yml

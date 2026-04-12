@@ -1,0 +1,169 @@
+services:
+  chronodb-node1:
+    build:
+      context: ..
+      dockerfile: Dockerfile.local
+    container_name: bench-chronodb-node1
+    ports:
+      - "19090:9090"
+      - "19091:9091"
+    volumes:
+      - chronodb-cluster-node1-data:/var/lib/chronodb
+      - chronodb-cluster-node1-logs:/var/log/chronodb
+      - ./config/chronodb-cluster-node1.yaml:/etc/chronodb/chronodb.yaml:ro
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      bench-network:
+        ipv4_address: 172.29.0.10
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: '4G'
+
+  chronodb-node2:
+    build:
+      context: ..
+      dockerfile: Dockerfile.local
+    container_name: bench-chronodb-node2
+    ports:
+      - "19093:9090"
+      - "19094:9091"
+    volumes:
+      - chronodb-cluster-node2-data:/var/lib/chronodb
+      - chronodb-cluster-node2-logs:/var/log/chronodb
+      - ./config/chronodb-cluster-node2.yaml:/etc/chronodb/chronodb.yaml:ro
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      bench-network:
+        ipv4_address: 172.29.0.11
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: '4G'
+
+  chronodb-node3:
+    build:
+      context: ..
+      dockerfile: Dockerfile.local
+    container_name: bench-chronodb-node3
+    ports:
+      - "19095:9090"
+      - "19096:9091"
+    volumes:
+      - chronodb-cluster-node3-data:/var/lib/chronodb
+      - chronodb-cluster-node3-logs:/var/log/chronodb
+      - ./config/chronodb-cluster-node3.yaml:/etc/chronodb/chronodb.yaml:ro
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      bench-network:
+        ipv4_address: 172.29.0.12
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: '4G'
+
+  etcd:
+    image: bitnami/etcd:3.5.13
+    container_name: bench-etcd
+    ports:
+      - "12379:2379"
+      - "12380:2380"
+    environment:
+      - ETCD_ROOT_PASSWORD=etcdroot
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ALLOW_NONE_AUTHENTICATION=yes
+    volumes:
+      - etcd-data:/bitnami/etcd
+    restart: unless-stopped
+    networks:
+      bench-network:
+        ipv4_address: 172.29.0.20
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: bench-prometheus-cluster
+    ports:
+      - "19092:9090"
+    volumes:
+      - ./config/prometheus-cluster.yaml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-cluster-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--storage.tsdb.retention.size=4GB'
+      - '--web.enable-lifecycle'
+      - '--web.enable-remote-write-receiver'
+      - '--query.max-samples=50000000'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      bench-network:
+        ipv4_address: 172.29.0.30
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: '8G'
+
+volumes:
+  chronodb-cluster-node1-data:
+    driver: local
+  chronodb-cluster-node1-logs:
+    driver: local
+  chronodb-cluster-node2-data:
+    driver: local
+  chronodb-cluster-node2-logs:
+    driver: local
+  chronodb-cluster-node3-data:
+    driver: local
+  chronodb-cluster-node3-logs:
+    driver: local
+  etcd-data:
+    driver: local
+  prometheus-cluster-data:
+    driver: local
+
+networks:
+  bench-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16

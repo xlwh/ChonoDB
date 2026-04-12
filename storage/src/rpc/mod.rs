@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tokio::sync::{RwLock, Semaphore};
+use tokio::time;
+use tracing::{debug, error, info, warn};
 
 /// RPC请求类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,43 +198,159 @@ impl RpcServer {
     }
 }
 
+/// RPC客户端配置
+#[derive(Debug, Clone)]
+pub struct RpcClientConfig {
+    pub max_connections: usize,
+    pub connection_timeout_ms: u64,
+    pub request_timeout_ms: u64,
+    pub max_retries: usize,
+    pub retry_delay_ms: u64,
+}
+
+impl Default for RpcClientConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: 10,
+            connection_timeout_ms: 5000,
+            request_timeout_ms: 30000,
+            max_retries: 3,
+            retry_delay_ms: 100,
+        }
+    }
+}
+
+/// RPC客户端连接池
+struct ConnectionPool {
+    addr: SocketAddr,
+    config: RpcClientConfig,
+    connections: RwLock<Vec<TcpStream>>,
+    semaphore: Semaphore,
+}
+
+impl ConnectionPool {
+    fn new(addr: SocketAddr, config: RpcClientConfig) -> Self {
+        let max_connections = config.max_connections;
+        Self {
+            addr,
+            config,
+            connections: RwLock::new(Vec::new()),
+            semaphore: Semaphore::new(max_connections),
+        }
+    }
+
+    async fn get_connection(&self) -> Result<TcpStream> {
+        let _permit = self.semaphore.acquire().await.map_err(|e| {
+            Error::Internal(format!("Failed to acquire connection semaphore: {}", e))
+        })?;
+
+        let mut connections = self.connections.write().await;
+        
+        if let Some(stream) = connections.pop() {
+            if stream.peer_addr().is_ok() {
+                return Ok(stream);
+            }
+        }
+
+        let timeout = Duration::from_millis(self.config.connection_timeout_ms);
+        let stream = time::timeout(timeout, TcpStream::connect(self.addr))
+            .await
+            .map_err(|_| Error::Internal("Connection timeout".to_string()))??;
+
+        Ok(stream)
+    }
+
+    async fn return_connection(&self, stream: TcpStream) {
+        if let Ok(_) = stream.peer_addr() {
+            if let Ok(mut connections) = self.connections.try_write() {
+                if connections.len() < self.config.max_connections {
+                    connections.push(stream);
+                    return;
+                }
+            }
+        }
+    }
+}
+
 /// RPC客户端
 pub struct RpcClient {
-    addr: SocketAddr,
+    pool: Arc<ConnectionPool>,
+    config: RpcClientConfig,
 }
 
 impl RpcClient {
     pub fn new(addr: SocketAddr) -> Self {
-        Self { addr }
+        let config = RpcClientConfig::default();
+        Self {
+            pool: Arc::new(ConnectionPool::new(addr, config.clone())),
+            config,
+        }
+    }
+
+    pub fn with_config(addr: SocketAddr, config: RpcClientConfig) -> Self {
+        Self {
+            pool: Arc::new(ConnectionPool::new(addr, config.clone())),
+            config,
+        }
     }
 
     pub async fn call(&self, request: RpcRequest) -> Result<RpcResponse> {
+        let mut last_error: Option<Error> = None;
+        
+        for attempt in 0..=self.config.max_retries {
+            match self.try_call(&request).await {
+                Ok(response) => return Ok(response),
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < self.config.max_retries {
+                        warn!("RPC call attempt {} failed: {}, retrying...", attempt + 1, last_error.as_ref().unwrap());
+                        time::sleep(Duration::from_millis(self.config.retry_delay_ms * (attempt as u64 + 1))).await;
+                    }
+                }
+            }
+        }
+        
+        Err(last_error.unwrap_or_else(|| Error::Internal("RPC call failed after retries".to_string())))
+    }
+
+    async fn try_call(&self, request: &RpcRequest) -> Result<RpcResponse> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        let stream = TcpStream::connect(self.addr).await?;
+        let stream = self.pool.get_connection().await?;
         let (mut reader, mut writer) = stream.into_split();
 
-        // Serialize request
-        let request_data = bincode::serialize(&request)?;
+        let request_data = bincode::serialize(request)?;
         let request_len = request_data.len() as u32;
 
-        // Send request
-        writer.write_all(&request_len.to_le_bytes()).await?;
-        writer.write_all(&request_data).await?;
+        let timeout = Duration::from_millis(self.config.request_timeout_ms);
+        let result = time::timeout(timeout, async {
+            writer.write_all(&request_len.to_le_bytes()).await?;
+            writer.write_all(&request_data).await?;
 
-        // Read response length
-        let mut len_buf = [0u8; 4];
-        reader.read_exact(&mut len_buf).await?;
-        let len = u32::from_le_bytes(len_buf) as usize;
+            let mut len_buf = [0u8; 4];
+            reader.read_exact(&mut len_buf).await?;
+            let len = u32::from_le_bytes(len_buf) as usize;
 
-        // Read response data
-        let mut data = vec![0u8; len];
-        reader.read_exact(&mut data).await?;
+            let mut data = vec![0u8; len];
+            reader.read_exact(&mut data).await?;
 
-        // Deserialize response
-        let response: RpcResponse = bincode::deserialize(&data)?;
+            let response: RpcResponse = bincode::deserialize(&data)?;
 
-        Ok(response)
+            Ok(response)
+        }).await;
+
+        match result {
+            Ok(Ok(response)) => {
+                self.pool.return_connection(reader.reunite(writer).unwrap()).await;
+                Ok(response)
+            }
+            Ok(Err(e)) => {
+                Err(e)
+            }
+            Err(_) => {
+                Err(Error::Internal("Request timeout".to_string()))
+            }
+        }
     }
 
     pub async fn write(&self, series: TimeSeries) -> Result<WriteResponse> {

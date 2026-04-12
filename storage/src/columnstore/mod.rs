@@ -3,6 +3,7 @@ mod block;
 mod writer;
 mod reader;
 mod block_format;
+mod compression;
 
 pub use column::{Column, ColumnBuilder, ColumnType};
 pub use block::{Block, BlockMeta, BlockBuilder, BLOCK_MAGIC, BLOCK_VERSION};
@@ -15,6 +16,7 @@ pub use block_format::{
     BlockBuilder as ChronoBlockBuilder, BlockReader as ChronoBlockReader,
     BLOCK_FORMAT_VERSION, SeriesBlockData,
 };
+pub use compression::{CompressionSelector, CompressionStats, DataType};
 
 /// 降采样级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

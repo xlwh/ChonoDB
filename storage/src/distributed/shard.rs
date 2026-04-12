@@ -109,6 +109,11 @@ impl ShardManager {
         hash % self.config.shard_count
     }
 
+    /// 获取分片数量
+    pub fn shard_count(&self) -> u64 {
+        self.config.shard_count
+    }
+
     /// 计算系列ID的哈希值
     fn hash_series_id(&self, series_id: TimeSeriesId) -> u64 {
         // 使用简单的哈希函数，实际应该使用更复杂的哈希算法

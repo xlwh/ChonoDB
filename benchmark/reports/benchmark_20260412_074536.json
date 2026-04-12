@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "timestamp": "2026-04-12T07:45:36.287986",
+    "total_duration_s": 21.0,
+    "total_tests": 0,
+    "passed": 0,
+    "failed": 0,
+    "pass_rate": "N/A",
+    "by_category": {},
+    "phase_timings": {
+      "standalone_setup": 1775951115.36
+    }
+  },
+  "results": [],
+  "comparisons": []
+}

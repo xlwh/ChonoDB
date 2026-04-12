@@ -114,8 +114,84 @@ pub type StorageObject = ObjectMetadata;
 /// 列表选项
 #[derive(Debug, Clone, Default)]
 pub struct ListOptions {
-    /// 最大返回数量
     pub max_keys: Option<usize>,
-    /// 分页令牌
     pub continuation_token: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_storage_options_new() {
+        let opts = StorageOptions::new("my-bucket", "us-west-2");
+        assert_eq!(opts.bucket, "my-bucket");
+        assert_eq!(opts.region, "us-west-2");
+        assert!(opts.access_key.is_none());
+        assert!(opts.secret_key.is_none());
+        assert!(opts.endpoint.is_none());
+        assert!(opts.local_path.is_none());
+        assert!(opts.extra.is_empty());
+    }
+
+    #[test]
+    fn test_storage_options_builder() {
+        let opts = StorageOptions::new("bucket", "region")
+            .with_credentials("key", "secret")
+            .with_endpoint("http://localhost:9000")
+            .with_local_path("/data");
+
+        assert_eq!(opts.access_key, Some("key".to_string()));
+        assert_eq!(opts.secret_key, Some("secret".to_string()));
+        assert_eq!(opts.endpoint, Some("http://localhost:9000".to_string()));
+        assert_eq!(opts.local_path, Some("/data".to_string()));
+    }
+
+    #[test]
+    fn test_storage_options_default() {
+        let opts = StorageOptions::default();
+        assert_eq!(opts.bucket, "chronodb");
+        assert_eq!(opts.region, "us-east-1");
+        assert!(opts.local_path.is_some());
+    }
+
+    #[test]
+    fn test_object_metadata() {
+        let meta = ObjectMetadata {
+            key: "blocks/1/data".to_string(),
+            size: 1024,
+            last_modified: 1000,
+            etag: Some("abc123".to_string()),
+            content_type: Some("application/octet-stream".to_string()),
+            metadata: HashMap::new(),
+        };
+        assert_eq!(meta.key, "blocks/1/data");
+        assert_eq!(meta.size, 1024);
+    }
+
+    #[test]
+    fn test_list_options_default() {
+        let opts = ListOptions::default();
+        assert!(opts.max_keys.is_none());
+        assert!(opts.continuation_token.is_none());
+    }
+
+    #[test]
+    fn test_storage_config_alias() {
+        let config: StorageConfig = StorageOptions::default();
+        assert_eq!(config.bucket, "chronodb");
+    }
+
+    #[test]
+    fn test_storage_object_alias() {
+        let obj: StorageObject = ObjectMetadata {
+            key: "test".to_string(),
+            size: 0,
+            last_modified: 0,
+            etag: None,
+            content_type: None,
+            metadata: HashMap::new(),
+        };
+        assert_eq!(obj.key, "test");
+    }
 }

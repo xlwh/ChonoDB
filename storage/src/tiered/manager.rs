@@ -271,3 +271,43 @@ impl TieredStorageManager {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tiered::TieredStorageConfig;
+
+    #[test]
+    fn test_tiered_storage_manager_new_disabled() {
+        let config = TieredStorageConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        let manager = TieredStorageManager::new(config);
+        assert!(manager.tiers.get_all_tiers().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_tiered_storage_manager_stats() {
+        let config = TieredStorageConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        let manager = TieredStorageManager::new(config);
+        let stats = manager.stats().await;
+        assert_eq!(stats.total_series, 0);
+        assert_eq!(stats.total_samples, 0);
+        assert_eq!(stats.total_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_data_location_no_data() {
+        let config = TieredStorageConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        let manager = TieredStorageManager::new(config);
+        let location = manager.get_data_location(999).await.unwrap();
+        assert!(location.is_none());
+    }
+}

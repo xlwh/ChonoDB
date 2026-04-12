@@ -5,10 +5,16 @@ use crate::query::planner::{PlanType, QueryPlan};
 use crate::query::QueryResult;
 use crate::rpc::ClusterRpcManager;
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, error, info, warn};
+
+fn intersect_series_ids(a: &[TimeSeriesId], b: &[TimeSeriesId]) -> Vec<TimeSeriesId> {
+    let set_a: HashSet<TimeSeriesId> = a.iter().copied().collect();
+    b.iter().filter(|&&id| set_a.contains(&id)).copied().collect()
+}
 
 /// 分布式查询协调器
 pub struct QueryCoordinator {
@@ -294,24 +300,30 @@ impl QueryCoordinator {
     async fn extract_series_ids(&self, plan: &QueryPlan) -> Result<Vec<TimeSeriesId>> {
         let matchers = Self::extract_matchers_from_plan(&plan.plan_type);
 
-        if matchers.is_empty() {
-            debug!("No matchers found in query plan, returning all series");
-            if let Some(ref mem_store) = self.mem_store {
-                return Ok(mem_store.get_all_series_ids());
-            }
-            return Ok(Vec::new());
-        }
-
         debug!("Extracting series IDs with matchers: {:?}", matchers);
 
         if let Some(ref mem_store) = self.mem_store {
+            if matchers.is_empty() {
+                debug!("No matchers found in query plan, returning all series");
+                return Ok(mem_store.get_all_series_ids());
+            }
+
+            // 先从倒排索引获取匹配的 series_id
+            let series_ids = self.query_index_for_matchers(&matchers).await?;
+            
+            if !series_ids.is_empty() {
+                debug!("Found {} series from inverted index", series_ids.len());
+                return Ok(series_ids);
+            }
+
+            // 如果倒排索引没有找到，回退到完整查询
             let start = plan.start;
             let end = plan.end;
             match mem_store.query(&matchers, start, end) {
                 Ok(series_list) => {
                     let series_ids: Vec<TimeSeriesId> =
                         series_list.iter().map(|ts| ts.id).collect();
-                    debug!("Found {} series from local index", series_ids.len());
+                    debug!("Found {} series from full query", series_ids.len());
                     Ok(series_ids)
                 }
                 Err(e) => {
@@ -321,6 +333,20 @@ impl QueryCoordinator {
             }
         } else {
             debug!("No local mem_store available, cannot extract series IDs");
+            Ok(Vec::new())
+        }
+    }
+
+    /// 从倒排索引查询匹配的 series_id
+    async fn query_index_for_matchers(&self, matchers: &[(String, String)]) -> Result<Vec<TimeSeriesId>> {
+        if matchers.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if let Some(ref mem_store) = self.mem_store {
+            // 使用 MemStore 的 find_series 方法从倒排索引查找匹配的 series_id
+            mem_store.find_series(matchers)
+        } else {
             Ok(Vec::new())
         }
     }

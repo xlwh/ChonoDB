@@ -33,13 +33,11 @@ pub struct ServerConfig {
     /// 日志配置
     pub log: LogConfig,
     
-    /// 预聚合配置
-    #[serde(default)]
-    pub pre_aggregation: PreAggregationConfig,
-    
-    /// 降采样配置
-    #[serde(default)]
-    pub downsampling: DownsamplingConfig,
+    /// 认证配置
+    pub auth: AuthConfig,
+
+    /// TLS 配置
+    pub tls: TlsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +172,78 @@ pub struct LogConfig {
     pub output: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthConfig {
+    /// 是否启用认证
+    pub enabled: bool,
+
+    /// 认证类型: basic | bearer | api_key
+    pub auth_type: String,
+
+    /// API密钥列表（用于api_key认证）
+    pub api_keys: Vec<String>,
+
+    /// 用户名（用于basic认证）
+    pub username: Option<String>,
+
+    /// 密码（用于basic认证）
+    pub password: Option<String>,
+
+    /// JWT密钥（用于bearer认证）
+    pub jwt_secret: Option<String>,
+
+    /// 允许的IP白名单
+    pub allowed_ips: Vec<String>,
+
+    /// 是否启用IP白名单检查
+    pub enable_ip_whitelist: bool,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auth_type: "basic".to_string(),
+            api_keys: vec![],
+            username: None,
+            password: None,
+            jwt_secret: None,
+            allowed_ips: vec![],
+            enable_ip_whitelist: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsConfig {
+    /// 是否启用 TLS
+    pub enabled: bool,
+
+    /// 证书文件路径
+    pub cert_file: Option<String>,
+
+    /// 私钥文件路径
+    pub key_file: Option<String>,
+
+    /// 客户端证书 CA 文件路径（用于双向 TLS）
+    pub client_ca_file: Option<String>,
+
+    /// 是否要求客户端证书
+    pub require_client_cert: bool,
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cert_file: None,
+            key_file: None,
+            client_ca_file: None,
+            require_client_cert: false,
+        }
+    }
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -234,8 +304,8 @@ impl Default for ServerConfig {
                 format: "json".to_string(),
                 output: Some(PathBuf::from("/var/log/chronodb/chronodb.log")),
             },
-            pre_aggregation: PreAggregationConfig::default(),
-            downsampling: DownsamplingConfig::default(),
+            auth: AuthConfig::default(),
+            tls: TlsConfig::default(),
         }
     }
 }
@@ -262,169 +332,87 @@ impl ServerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PreAggregationConfig {
-    /// 自动创建配置
-    pub auto_create: AutoCreateConfig,
-    
-    /// 自动清理配置
-    pub auto_cleanup: AutoCleanupConfig,
-    
-    /// 存储配置
-    pub storage: PreAggregationStorageConfig,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl Default for PreAggregationConfig {
-    fn default() -> Self {
-        Self {
-            auto_create: AutoCreateConfig::default(),
-            auto_cleanup: AutoCleanupConfig::default(),
-            storage: PreAggregationStorageConfig::default(),
-        }
+    #[test]
+    fn test_server_config_default() {
+        let config = ServerConfig::default();
+        assert_eq!(config.listen_address, "0.0.0.0");
+        assert_eq!(config.port, 9090);
+        assert_eq!(config.storage.mode, "standalone");
+        assert_eq!(config.storage.backend, "local");
+        assert_eq!(config.query.max_concurrent, 100);
+        assert_eq!(config.query.timeout, 120);
+        assert!(config.query.enable_vectorized);
+        assert!(config.query.enable_parallel);
+        assert!(config.query.enable_auto_downsampling);
+        assert_eq!(config.rules.evaluation_interval, 60);
+        assert_eq!(config.targets.scrape_interval, 60);
+        assert_eq!(config.compression.time_column.algorithm, "zstd");
+        assert_eq!(config.compression.value_column.algorithm, "zstd");
+        assert!(config.compression.value_column.use_prediction);
+        assert_eq!(config.log.level, "info");
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AutoCreateConfig {
-    /// 是否启用自动创建
-    pub enabled: bool,
-    
-    /// 查询频率阈值（次/小时）
-    pub frequency_threshold: u64,
-    
-    /// 统计时间窗口（小时）
-    pub time_window: u64,
-    
-    /// 最大自动创建规则数
-    pub max_auto_rules: usize,
-    
-    /// 排除的查询模式（正则表达式）
-    #[serde(default)]
-    pub exclude_patterns: Vec<String>,
-}
-
-impl Default for AutoCreateConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            frequency_threshold: 20,
-            time_window: 24,
-            max_auto_rules: 100,
-            exclude_patterns: vec![
-                "^up$".to_string(),
-                "^ALERTS".to_string(),
-            ],
-        }
+    #[test]
+    fn test_server_config_serialization() {
+        let config = ServerConfig::default();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(yaml.contains("listen_address"));
+        assert!(yaml.contains("port"));
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AutoCleanupConfig {
-    /// 是否启用自动清理
-    pub enabled: bool,
-    
-    /// 清理检查间隔（小时）
-    pub check_interval: u64,
-    
-    /// 低频阈值（次/小时）
-    pub low_frequency_threshold: u64,
-    
-    /// 清理前的观察期（小时）
-    pub observation_period: u64,
-}
-
-impl Default for AutoCleanupConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            check_interval: 6,
-            low_frequency_threshold: 5,
-            observation_period: 48,
-        }
+    #[test]
+    fn test_server_config_roundtrip() {
+        let config = ServerConfig::default();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let deserialized: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(deserialized.listen_address, config.listen_address);
+        assert_eq!(deserialized.port, config.port);
+        assert_eq!(deserialized.query.max_concurrent, config.query.max_concurrent);
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PreAggregationStorageConfig {
-    /// 预聚合数据保留时间（天）
-    pub retention_days: u32,
-    
-    /// 最大存储空间（GB）
-    pub max_storage_gb: u32,
-    
-    /// 压缩算法
-    pub compression: String,
-}
-
-impl Default for PreAggregationStorageConfig {
-    fn default() -> Self {
-        Self {
-            retention_days: 30,
-            max_storage_gb: 100,
-            compression: "zstd".to_string(),
-        }
+    #[test]
+    fn test_storage_config() {
+        let config = ServerConfig::default();
+        assert_eq!(config.storage.mode, "standalone");
+        assert_eq!(config.storage.backend, "local");
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DownsamplingConfig {
-    /// 是否启用降采样
-    pub enabled: bool,
-    
-    /// 降采样间隔（秒）
-    pub interval: u64,
-    
-    /// 并发数
-    pub concurrency: usize,
-    
-    /// 任务超时（秒）
-    pub timeout: u64,
-    
-    /// 降采样级别配置
-    pub levels: Vec<DownsamplingLevelConfig>,
-}
+    #[test]
+    fn test_query_config() {
+        let config = ServerConfig::default();
+        assert_eq!(config.query.max_samples, 50_000_000);
+        assert_eq!(config.query.downsample_policy, "auto");
+        assert_eq!(config.query.query_cache_ttl, 300);
+    }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DownsamplingLevelConfig {
-    /// 降采样级别
-    pub level: String,
-    
-    /// 是否启用
-    pub enabled: bool,
-    
-    /// 降采样函数
-    pub functions: Vec<String>,
-}
+    #[test]
+    fn test_rules_config() {
+        let config = ServerConfig::default();
+        assert!(config.rules.rule_files.is_empty());
+        assert_eq!(config.rules.alert_send_interval, 60);
+    }
 
-impl Default for DownsamplingConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            interval: 900, // 15分钟
-            concurrency: 4,
-            timeout: 3600, // 1小时
-            levels: vec![
-                DownsamplingLevelConfig {
-                    level: "L1".to_string(),
-                    enabled: true,
-                    functions: vec!["min", "max", "avg", "sum", "count", "last"].into_iter().map(String::from).collect(),
-                },
-                DownsamplingLevelConfig {
-                    level: "L2".to_string(),
-                    enabled: true,
-                    functions: vec!["min", "max", "avg", "sum", "count", "last"].into_iter().map(String::from).collect(),
-                },
-                DownsamplingLevelConfig {
-                    level: "L3".to_string(),
-                    enabled: true,
-                    functions: vec!["min", "max", "avg", "sum", "count", "last"].into_iter().map(String::from).collect(),
-                },
-                DownsamplingLevelConfig {
-                    level: "L4".to_string(),
-                    enabled: true,
-                    functions: vec!["min", "max", "avg", "sum", "count", "last"].into_iter().map(String::from).collect(),
-                },
-            ],
-        }
+    #[test]
+    fn test_compression_config() {
+        let config = ServerConfig::default();
+        assert_eq!(config.compression.label_column.algorithm, "dictionary");
+        assert_eq!(config.compression.time_column.level, 3);
+    }
+
+    #[test]
+    fn test_config_save_and_load() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+
+        let config = ServerConfig::default();
+        config.save_to_file(&config_path).unwrap();
+
+        let loaded = ServerConfig::from_file(&config_path).unwrap();
+        assert_eq!(loaded.port, 9090);
+        assert_eq!(loaded.listen_address, "0.0.0.0");
     }
 }

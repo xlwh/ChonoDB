@@ -1,0 +1,18 @@
+{
+  "backup_id": "backup_1775947767",
+  "backup_type": "incremental",
+  "timestamp": "2026-04-11T22:49:27.795161202Z",
+  "source_dir": "/tmp/.tmp5kNTu4",
+  "storage_backend": "local",
+  "files_count": 1,
+  "total_size": 1140,
+  "previous_backup_id": "backup_1775947767",
+  "verification_status": {
+    "verified_at": "2026-04-11T22:49:27.827912105Z",
+    "success": false,
+    "errors": [
+      "Missing directory: blocks",
+      "Missing directory: index"
+    ]
+  }
+}

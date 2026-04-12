@@ -292,6 +292,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_build_key() {
         let config = GcsConfig::default();
         

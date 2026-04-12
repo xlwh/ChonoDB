@@ -31,9 +31,9 @@ impl Default for ClusterConfig {
 }
 
 impl ClusterConfig {
-    pub fn from_yaml_config(yaml_config: &crate::config::ClusterConfigYaml) -> Self {
+    pub fn from_yaml_config(yaml_config: &crate::config::ClusterConfigYaml, cluster_name: String) -> Self {
         Self {
-            cluster_name: "chronodb-cluster".to_string(),
+            cluster_name,
             heartbeat_interval_ms: yaml_config.heartbeat_interval_ms,
             node_timeout_ms: yaml_config.node_timeout_ms,
             discovery_addresses: yaml_config.discovery_addresses.clone(),
@@ -57,8 +57,19 @@ pub struct NodeInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeStatus {
     Online,
-    Offline,
     Degraded,
+    Offline,
+    Suspect,
+}
+
+impl NodeStatus {
+    pub fn is_available(&self) -> bool {
+        matches!(self, NodeStatus::Online | NodeStatus::Degraded)
+    }
+    
+    pub fn is_healthy(&self) -> bool {
+        matches!(self, NodeStatus::Online)
+    }
 }
 
 pub struct ClusterManager {
@@ -164,6 +175,11 @@ impl ClusterManager {
         let handle = tokio::spawn(async move {
             let mut interval = interval(Duration::from_millis(config.heartbeat_interval_ms));
 
+            // 用于跟踪连续超时次数
+            let mut timeout_counts: HashMap<String, u32> = HashMap::new();
+            // 降级超时阈值（毫秒）
+            let degraded_timeout_ms = config.node_timeout_ms / 2;
+
             loop {
                 interval.tick().await;
 
@@ -171,16 +187,77 @@ impl ClusterManager {
                 let mut nodes_write = nodes.write().await;
 
                 let mut failed_nodes: Vec<String> = Vec::new();
+                let mut degraded_nodes: Vec<String> = Vec::new();
+                let mut recovered_nodes: Vec<String> = Vec::new();
                 let mut leader_timed_out = false;
 
-                for (node_id, node) in &*nodes_write {
-                    if now - node.last_heartbeat > config.node_timeout_ms as i64 {
-                        warn!("Node {} timed out", node_id);
-                        failed_nodes.push(node_id.clone());
+                for (node_id, node) in &mut *nodes_write {
+                    let time_since_heartbeat = now - node.last_heartbeat;
+                    
+                    // 获取当前超时次数，默认为0
+                    let timeout_count = timeout_counts.entry(node_id.clone()).or_insert(0);
 
-                        if node.is_leader {
-                            info!("Leader node {} timed out", node_id);
-                            leader_timed_out = true;
+                    match node.status {
+                        NodeStatus::Online => {
+                            if time_since_heartbeat > config.node_timeout_ms as i64 {
+                                warn!("Node {} timed out ({}ms)", node_id, time_since_heartbeat);
+                                *timeout_count += 1;
+                                
+                                // 连续超时3次才标记为离线
+                                if *timeout_count >= 3 {
+                                    failed_nodes.push(node_id.clone());
+                                    node.status = NodeStatus::Offline;
+                                    
+                                    if node.is_leader {
+                                        info!("Leader node {} timed out after {} attempts", node_id, timeout_count);
+                                        leader_timed_out = true;
+                                    }
+                                } else {
+                                    // 首次超时标记为可疑状态
+                                    node.status = NodeStatus::Suspect;
+                                    warn!("Node {} marked as suspect (attempt {})", node_id, timeout_count);
+                                }
+                            } else if time_since_heartbeat > degraded_timeout_ms as i64 {
+                                // 延迟较高但未超时，标记为降级状态
+                                node.status = NodeStatus::Degraded;
+                                degraded_nodes.push(node_id.clone());
+                                debug!("Node {} marked as degraded (latency: {}ms)", node_id, time_since_heartbeat);
+                            }
+                        }
+                        NodeStatus::Degraded => {
+                            if time_since_heartbeat > config.node_timeout_ms as i64 {
+                                *timeout_count += 1;
+                                if *timeout_count >= 3 {
+                                    failed_nodes.push(node_id.clone());
+                                    node.status = NodeStatus::Offline;
+                                } else {
+                                    node.status = NodeStatus::Suspect;
+                                }
+                            } else if time_since_heartbeat <= degraded_timeout_ms as i64 {
+                                // 恢复正常
+                                node.status = NodeStatus::Online;
+                                *timeout_count = 0;
+                                recovered_nodes.push(node_id.clone());
+                                info!("Node {} recovered from degraded state", node_id);
+                            }
+                        }
+                        NodeStatus::Suspect => {
+                            if time_since_heartbeat > config.node_timeout_ms as i64 {
+                                *timeout_count += 1;
+                                if *timeout_count >= 3 {
+                                    failed_nodes.push(node_id.clone());
+                                    node.status = NodeStatus::Offline;
+                                }
+                            } else {
+                                // 恢复正常
+                                node.status = NodeStatus::Online;
+                                *timeout_count = 0;
+                                recovered_nodes.push(node_id.clone());
+                                info!("Node {} recovered from suspect state", node_id);
+                            }
+                        }
+                        NodeStatus::Offline => {
+                            // 离线节点保持离线状态
                         }
                     }
                 }
@@ -189,40 +266,70 @@ impl ClusterManager {
                     *leader_id.write().await = None;
                 }
 
-                for failed_node_id in &failed_nodes {
-                    if let Some(node) = nodes_write.get_mut(failed_node_id) {
-                        node.status = NodeStatus::Offline;
-                    }
-                }
-
-                let healthy_nodes: Vec<String> = nodes_write
+                // 获取所有可用节点（Online + Degraded）
+                let available_nodes: Vec<String> = nodes_write
                     .values()
-                    .filter(|n| n.status == NodeStatus::Online)
+                    .filter(|n| n.status.is_available())
                     .map(|n| n.node_id.clone())
                     .collect();
 
+                // 获取健康节点（仅 Online）
+                let healthy_nodes: Vec<String> = nodes_write
+                    .values()
+                    .filter(|n| n.status.is_healthy())
+                    .map(|n| n.node_id.clone())
+                    .collect();
+
+                // 处理降级节点（不触发故障转移，但记录日志）
+                for degraded_node in &degraded_nodes {
+                    warn!("Node {} is in degraded state, consider investigating", degraded_node);
+                }
+
+                // 处理故障节点
                 for failed_node_id in &failed_nodes {
                     info!("Processing failover for node: {}", failed_node_id);
 
                     if let Some(ref sm) = shard_manager {
-                        match sm.handle_node_failure(failed_node_id, &healthy_nodes).await {
+                        match sm.handle_node_failure(failed_node_id, &available_nodes).await {
                             Ok(()) => info!("Shard manager handled failure of node {}", failed_node_id),
                             Err(e) => warn!("Shard manager failed to handle node {}: {}", failed_node_id, e),
                         }
                     }
 
                     if let Some(ref rm) = replication_manager {
-                        match rm.handle_node_failure(failed_node_id, &healthy_nodes).await {
+                        match rm.handle_node_failure(failed_node_id, &available_nodes).await {
                             Ok(()) => info!("Replication manager handled failure of node {}", failed_node_id),
                             Err(e) => warn!("Replication manager failed to handle node {}: {}", failed_node_id, e),
                         }
                     }
                 }
 
+                // 处理恢复节点（重新加入集群）
+                for recovered_node in &recovered_nodes {
+                    info!("Node {} recovered, re-adding to cluster", recovered_node);
+                    if let Some(ref sm) = shard_manager {
+                        if let Err(e) = sm.rebalance_shards(&available_nodes).await {
+                            warn!("Failed to rebalance shards after node recovery: {}", e);
+                        }
+                    }
+                }
+
+                // 重新选举 leader（如果 leader 超时且有健康节点）
                 if leader_timed_out && !healthy_nodes.is_empty() {
                     info!("Re-electing leader from {} healthy nodes", healthy_nodes.len());
                 }
 
+                // 从超时计数中移除恢复的节点
+                for recovered_node in &recovered_nodes {
+                    timeout_counts.remove(recovered_node);
+                }
+
+                // 从超时计数中移除故障节点（稍后会从nodes中移除）
+                for failed_node_id in &failed_nodes {
+                    timeout_counts.remove(failed_node_id);
+                }
+
+                // 移除故障节点
                 for failed_node_id in failed_nodes {
                     nodes_write.remove(&failed_node_id);
                     info!("Removed failed node: {}", failed_node_id);
@@ -237,8 +344,10 @@ impl ClusterManager {
 
     pub async fn register_node(&self, node_info: NodeInfo) -> Result<()> {
         let node_id = node_info.node_id.clone();
-        let mut nodes = self.nodes.write().await;
-        nodes.insert(node_id.clone(), node_info);
+        {
+            let mut nodes = self.nodes.write().await;
+            nodes.insert(node_id.clone(), node_info);
+        }
         info!("Node registered: {}", node_id);
 
         self.check_leader_election().await?;
@@ -275,16 +384,21 @@ impl ClusterManager {
     }
 
     pub async fn remove_node(&self, node_id: &str) -> Result<()> {
-        let mut nodes = self.nodes.write().await;
-        nodes.remove(node_id);
+        {
+            let mut nodes = self.nodes.write().await;
+            nodes.remove(node_id);
+        }
         info!("Node removed: {}", node_id);
 
-        if let Some(leader) = self.leader_id.read().await.as_ref() {
-            if leader == node_id {
-                info!("Leader node {} removed, starting re-election", node_id);
-                *self.leader_id.write().await = None;
-                self.check_leader_election().await?;
-            }
+        let needs_relection = {
+            let leader = self.leader_id.read().await;
+            leader.as_ref().map(|l| l == node_id).unwrap_or(false)
+        };
+
+        if needs_relection {
+            info!("Leader node {} removed, starting re-election", node_id);
+            *self.leader_id.write().await = None;
+            self.check_leader_election().await?;
         }
 
         Ok(())
@@ -299,75 +413,158 @@ impl ClusterManager {
     }
 
     async fn elect_leader(&self) -> Result<()> {
-        let nodes = self.nodes.read().await;
-        let healthy_nodes: Vec<&NodeInfo> = nodes
-            .values()
-            .filter(|n| n.status == NodeStatus::Online)
-            .collect();
+        let leader_node_id: Option<String>;
+        let mut leader_shard_count: u64 = 0;
+        
+        {
+            let nodes = self.nodes.read().await;
+            let healthy_nodes: Vec<&NodeInfo> = nodes
+                .values()
+                .filter(|n| n.status.is_healthy())
+                .collect();
 
-        if !healthy_nodes.is_empty() {
+            if healthy_nodes.is_empty() {
+                info!("No healthy nodes available for leader election");
+                return Ok(());
+            }
+
+            // 改进的 leader 选举算法：
+            // 1. 优先选择已有 leader 标记的节点（如果仍然健康）
+            // 2. 选择分片数量最少的节点（负载均衡）
+            // 3. 考虑节点版本（新版本优先）
+            // 4. 最后按节点ID排序（确定性）
             let mut candidates = healthy_nodes.clone();
 
             candidates.sort_by(|a, b| {
+                // 1. 当前 leader 优先
                 if a.is_leader && !b.is_leader {
                     return std::cmp::Ordering::Less;
                 } else if !a.is_leader && b.is_leader {
                     return std::cmp::Ordering::Greater;
                 }
 
+                // 2. 分片数量最少优先（负载均衡）
                 if a.shard_count < b.shard_count {
                     return std::cmp::Ordering::Less;
                 } else if a.shard_count > b.shard_count {
                     return std::cmp::Ordering::Greater;
                 }
 
+                // 3. 版本号较新优先
+                let version_cmp = compare_versions(&a.version, &b.version);
+                if version_cmp != std::cmp::Ordering::Equal {
+                    return version_cmp.reverse(); // 新版本优先
+                }
+
+                // 4. 节点ID排序（确定性）
                 a.node_id.cmp(&b.node_id)
             });
 
-            let leader = candidates[0];
-            *self.leader_id.write().await = Some(leader.node_id.clone());
+            leader_node_id = Some(candidates[0].node_id.clone());
+            leader_shard_count = candidates[0].shard_count;
+        }
+
+        if let Some(leader) = leader_node_id {
+            *self.leader_id.write().await = Some(leader.clone());
 
             let mut nodes_write = self.nodes.write().await;
             for (nid, node) in &mut *nodes_write {
-                node.is_leader = *nid == leader.node_id;
+                node.is_leader = *nid == leader;
             }
 
-            info!("Elected new leader: {}, shard count: {}", leader.node_id, leader.shard_count);
+            info!("Elected new leader: {}, shard count: {}", leader, leader_shard_count);
         }
 
         Ok(())
     }
 
-    pub async fn handle_node_failure(&self, node_id: &str) -> Result<()> {
-        info!("Handling node failure: {}", node_id);
+    /// 触发主从切换
+    pub async fn trigger_failover_switch(&self, failed_node_id: &str) -> Result<()> {
+        info!("Triggering failover switch for failed node: {}", failed_node_id);
 
-        let mut nodes_write = self.nodes.write().await;
-        if let Some(node) = nodes_write.get_mut(node_id) {
-            node.status = NodeStatus::Offline;
-            info!("Marked node {} as offline", node_id);
-        }
-
-        if let Some(leader) = self.leader_id.read().await.as_ref() {
-            if leader == node_id {
-                info!("Leader node {} failed, starting re-election", node_id);
-                *self.leader_id.write().await = None;
-                self.elect_leader().await?;
+        let current_leader = self.get_leader().await?;
+        
+        if current_leader.as_ref().map(|l| l.node_id == failed_node_id).unwrap_or(false) {
+            info!("Leader node {} failed, initiating leader re-election", failed_node_id);
+            
+            *self.leader_id.write().await = None;
+            
+            self.elect_leader().await?;
+            
+            if let Some(new_leader) = self.get_leader().await? {
+                info!("Successfully elected new leader: {}", new_leader.node_id);
+                
+                if let Some(ref rpc_manager) = self.rpc_manager {
+                    let clients = rpc_manager.get_all_clients().await;
+                    for (node_id, _client) in clients {
+                        if node_id != new_leader.node_id {
+                            debug!("Will notify node {} of new leader {}", node_id, new_leader.node_id);
+                        }
+                    }
+                }
+            } else {
+                warn!("Failed to elect new leader after failover");
             }
         }
 
-        let healthy_nodes: Vec<String> = nodes_write
-            .values()
-            .filter(|n| n.status == NodeStatus::Online)
-            .map(|n| n.node_id.clone())
-            .collect();
+        Ok(())
+    }
+}
+
+/// 比较版本号
+fn compare_versions(v1: &str, v2: &str) -> std::cmp::Ordering {
+    let parts1: Vec<u32> = v1.split('.').filter_map(|s| s.parse().ok()).collect();
+    let parts2: Vec<u32> = v2.split('.').filter_map(|s| s.parse().ok()).collect();
+    
+    for (a, b) in parts1.iter().zip(parts2.iter()) {
+        match a.cmp(b) {
+            std::cmp::Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    
+    parts1.len().cmp(&parts2.len())
+}
+
+impl ClusterManager {
+    pub async fn handle_node_failure(&self, node_id: &str) -> Result<()> {
+        info!("Handling node failure: {}", node_id);
+
+        let is_leader_failure;
+        let healthy_nodes: Vec<String>;
+        
+        {
+            let mut nodes_write = self.nodes.write().await;
+            if let Some(node) = nodes_write.get_mut(node_id) {
+                node.status = NodeStatus::Offline;
+                info!("Marked node {} as offline", node_id);
+            }
+
+            healthy_nodes = nodes_write
+                .values()
+                .filter(|n| n.status.is_healthy())
+                .map(|n| n.node_id.clone())
+                .collect();
+
+            nodes_write.remove(node_id);
+            info!("Removed failed node: {}", node_id);
+        }
+
+        {
+            let leader = self.leader_id.read().await;
+            is_leader_failure = leader.as_ref().map(|l| l == node_id).unwrap_or(false);
+        }
+
+        if is_leader_failure {
+            info!("Leader node {} failed, starting re-election", node_id);
+            *self.leader_id.write().await = None;
+            self.elect_leader().await?;
+        }
 
         if !healthy_nodes.is_empty() {
             info!("Triggering failover with healthy nodes: {:?}", healthy_nodes);
             self.trigger_failover(node_id, &healthy_nodes).await?;
         }
-
-        nodes_write.remove(node_id);
-        info!("Removed failed node: {}", node_id);
 
         info!("Failover completed for node: {}, healthy nodes remaining: {}",
               node_id, healthy_nodes.len());
@@ -383,12 +580,15 @@ impl ClusterManager {
             return Ok(());
         }
 
-        if let Some(leader) = self.leader_id.read().await.as_ref() {
-            if leader == failed_node_id {
-                info!("Leader node failed, starting re-election");
-                *self.leader_id.write().await = None;
-                self.elect_leader().await?;
-            }
+        let needs_relection = {
+            let leader = self.leader_id.read().await;
+            leader.as_ref().map(|l| l == failed_node_id).unwrap_or(false)
+        };
+
+        if needs_relection {
+            info!("Leader node failed, starting re-election");
+            *self.leader_id.write().await = None;
+            self.elect_leader().await?;
         }
 
         if let Some(ref sm) = self.shard_manager {
@@ -487,43 +687,248 @@ async fn discover_nodes(addr: &str, nodes: &Arc<RwLock<HashMap<String, NodeInfo>
 
     if let Ok(socket_addr) = addr.parse::<std::net::SocketAddr>() {
         let client = crate::rpc::RpcClient::new(socket_addr);
-
-        match client.get_cluster_status().await {
-            Ok(cluster_status) => {
-                info!("Successfully discovered cluster from {}", addr);
-
-                let mut nodes_write = nodes.write().await;
-                for node_info in cluster_status.nodes {
-                    let node_id_clone = node_info.node_id.clone();
-                    let node = NodeInfo {
-                        node_id: node_info.node_id,
-                        address: node_info.address,
-                        status: match node_info.status {
-                            crate::rpc::NodeStatus::Online => NodeStatus::Online,
-                            crate::rpc::NodeStatus::Offline => NodeStatus::Offline,
-                            crate::rpc::NodeStatus::Suspect => NodeStatus::Degraded,
-                        },
-                        last_heartbeat: node_info.last_heartbeat,
-                        shard_count: 0,
-                        series_count: 0,
-                        is_leader: cluster_status.is_coordinator && cluster_status.node_id == node_id_clone,
-                        version: "1.0.0".to_string(),
-                    };
-
-                    let node_id = node.node_id.clone();
-                    if !nodes_write.contains_key(&node_id) {
-                        nodes_write.insert(node_id.clone(), node);
-                        info!("Discovered new node: {}", node_id);
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Failed to discover nodes from {}: {}", addr, e);
-            }
-        }
+        perform_discovery(client, addr, nodes).await;
     } else {
-        debug!("Address {} is not a socket address, trying other discovery methods", addr);
+        debug!("Address {} is not a socket address, trying DNS resolution", addr);
+        
+        if let Ok(socket_addrs) = tokio::net::lookup_host(addr).await {
+            for socket_addr in socket_addrs {
+                let client = crate::rpc::RpcClient::new(socket_addr);
+                perform_discovery(client, &socket_addr.to_string(), nodes).await;
+            }
+        } else {
+            warn!("Failed to resolve address: {}", addr);
+        }
     }
 
     Ok(())
+}
+
+async fn perform_discovery(client: crate::rpc::RpcClient, addr: &str, nodes: &Arc<RwLock<HashMap<String, NodeInfo>>>) {
+    match client.get_cluster_status().await {
+        Ok(cluster_status) => {
+            info!("Successfully discovered cluster from {}", addr);
+
+            let mut nodes_write = nodes.write().await;
+            for node_info in cluster_status.nodes {
+                let node_id_clone = node_info.node_id.clone();
+                let node = NodeInfo {
+                    node_id: node_info.node_id,
+                    address: node_info.address,
+                    status: match node_info.status {
+                        crate::rpc::NodeStatus::Online => NodeStatus::Online,
+                        crate::rpc::NodeStatus::Offline => NodeStatus::Offline,
+                        crate::rpc::NodeStatus::Suspect => NodeStatus::Degraded,
+                    },
+                    last_heartbeat: node_info.last_heartbeat,
+                    shard_count: 0,
+                    series_count: 0,
+                    is_leader: cluster_status.is_coordinator && cluster_status.node_id == node_id_clone,
+                    version: "1.0.0".to_string(),
+                };
+
+                let node_id = node.node_id.clone();
+                if !nodes_write.contains_key(&node_id) {
+                    nodes_write.insert(node_id.clone(), node);
+                    info!("Discovered new node: {}", node_id);
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to discover nodes from {}: {}", addr, e);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cluster_config_default() {
+        let config = ClusterConfig::default();
+        assert_eq!(config.cluster_name, "chronodb-cluster");
+        assert_eq!(config.heartbeat_interval_ms, 5000);
+        assert_eq!(config.node_timeout_ms, 15000);
+        assert!(config.discovery_addresses.is_empty());
+        assert!(!config.enable_auto_discovery);
+    }
+
+    #[test]
+    fn test_node_status_equality() {
+        assert_eq!(NodeStatus::Online, NodeStatus::Online);
+        assert_eq!(NodeStatus::Offline, NodeStatus::Offline);
+        assert_eq!(NodeStatus::Degraded, NodeStatus::Degraded);
+        assert_ne!(NodeStatus::Online, NodeStatus::Offline);
+    }
+
+    #[test]
+    fn test_node_info_creation() {
+        let node = NodeInfo {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: 1000,
+            shard_count: 5,
+            series_count: 100,
+            is_leader: true,
+            version: "1.0.0".to_string(),
+        };
+        assert_eq!(node.node_id, "node-1");
+        assert_eq!(node.status, NodeStatus::Online);
+        assert!(node.is_leader);
+    }
+
+    #[tokio::test]
+    async fn test_cluster_manager_new() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+        let nodes = manager.get_nodes().await.unwrap();
+        assert!(nodes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_register_node() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+
+        let node = NodeInfo {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: chrono::Utc::now().timestamp_millis(),
+            shard_count: 0,
+            series_count: 0,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        };
+
+        manager.register_node(node).await.unwrap();
+
+        let nodes = manager.get_nodes().await.unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node_id, "node-1");
+    }
+
+    #[tokio::test]
+    async fn test_leader_election() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+
+        let node1 = NodeInfo {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: chrono::Utc::now().timestamp_millis(),
+            shard_count: 2,
+            series_count: 0,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        };
+
+        let node2 = NodeInfo {
+            node_id: "node-2".to_string(),
+            address: "127.0.0.1:9091".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: chrono::Utc::now().timestamp_millis(),
+            shard_count: 5,
+            series_count: 0,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        };
+
+        manager.register_node(node1).await.unwrap();
+        manager.register_node(node2).await.unwrap();
+
+        let leader = manager.get_leader().await.unwrap();
+        assert!(leader.is_some());
+        let leader = leader.unwrap();
+        assert!(leader.is_leader);
+    }
+
+    #[tokio::test]
+    async fn test_remove_node() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+
+        let node = NodeInfo {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: chrono::Utc::now().timestamp_millis(),
+            shard_count: 0,
+            series_count: 0,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        };
+
+        manager.register_node(node).await.unwrap();
+        assert_eq!(manager.get_nodes().await.unwrap().len(), 1);
+
+        manager.remove_node("node-1").await.unwrap();
+        assert_eq!(manager.get_nodes().await.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_update_heartbeat() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+
+        let node = NodeInfo {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            status: NodeStatus::Offline,
+            last_heartbeat: 0,
+            shard_count: 0,
+            series_count: 0,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        };
+
+        manager.register_node(node).await.unwrap();
+
+        manager.update_heartbeat("node-1").await.unwrap();
+
+        let nodes = manager.get_nodes().await.unwrap();
+        assert_eq!(nodes[0].status, NodeStatus::Online);
+        assert!(nodes[0].last_heartbeat > 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_healthy_nodes() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+
+        let node = NodeInfo {
+            node_id: "node-1".to_string(),
+            address: "127.0.0.1:9090".to_string(),
+            status: NodeStatus::Online,
+            last_heartbeat: chrono::Utc::now().timestamp_millis(),
+            shard_count: 0,
+            series_count: 0,
+            is_leader: false,
+            version: "1.0.0".to_string(),
+        };
+
+        manager.register_node(node).await.unwrap();
+
+        let healthy = manager.get_healthy_nodes().await.unwrap();
+        assert_eq!(healthy.len(), 1);
+        assert_eq!(healthy[0], "node-1");
+    }
+
+    #[tokio::test]
+    async fn test_stop_without_start() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+        let result = manager.stop().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_set_current_node() {
+        let config = ClusterConfig::default();
+        let manager = ClusterManager::new(config);
+        manager.set_current_node("node-0".to_string(), "127.0.0.1:9090".to_string()).await;
+    }
 }

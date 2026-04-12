@@ -1,0 +1,7 @@
+# Python cache and test reports
+__pycache__/
+*.pyc
+*.pyo
+integration_test_reports/
+test_reports/
+

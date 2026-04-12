@@ -7,10 +7,12 @@ use chrono;
 use parse_duration::parse;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::SystemTime;
 use tracing::{error, warn};
 
 use crate::api::response::*;
 use crate::state::ServerState;
+use crate::rules::alerting;
 
 /// 处理即时查询（GET方法）
 pub async fn handle_query_get(
@@ -95,14 +97,9 @@ async fn handle_query_internal(
     // 简单的标签匹配解析（实际项目中需要更复杂的PromQL解析）
     let label_matchers = parse_label_matchers(processed_query);
 
-    // 验证时间范围
-    let start_time = time - 3600000; // 过去1小时
-    if start_time < 0 {
-        return Json(ApiResponse::error(
-            "bad_data",
-            "Invalid time range: start time cannot be negative",
-        ));
-    }
+    // 即时查询使用从时间戳最小值到指定时间的范围
+    // 这样可以查询所有时间的数据，而不仅仅是过去1小时
+    let start_time = i64::MIN;
 
     // 使用内存存储查询数据
     let result = match state.memstore.query(&label_matchers, start_time, time) {
@@ -770,14 +767,48 @@ pub async fn handle_rules(
 pub async fn handle_alerts(
     State(state): State<Arc<ServerState>>,
 ) -> Json<ApiResponse<HashMap<String, Vec<Alert>>>> {
-    let _alert_manager = state.alert_manager.read().await;
+    let alert_manager = state.alert_manager.read().await;
 
-    let alerts: Vec<Alert> = vec![]; // TODO: 从 alert_manager 获取实际告警
+    let alerts: Vec<Alert> = alert_manager.get_alerts()
+        .iter()
+        .map(|alert| convert_alert(alert))
+        .collect();
 
     let mut data = HashMap::new();
     data.insert("alerts".to_string(), alerts);
 
     Json(ApiResponse::success(data))
+}
+
+fn convert_alert(alert: &alerting::Alert) -> Alert {
+    let labels: serde_json::Map<String, serde_json::Value> = alert.labels
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+        .collect();
+    
+    let annotations: serde_json::Map<String, serde_json::Value> = alert.annotations
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+        .collect();
+
+    let state_str = match alert.state {
+        alerting::AlertState::Inactive => "inactive",
+        alerting::AlertState::Pending => "pending",
+        alerting::AlertState::Firing => "firing",
+    };
+
+    let active_at = alert.active_at.as_ref().map(|t| {
+        let dt = chrono::DateTime::<chrono::Utc>::from(*t);
+        dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    });
+
+    Alert {
+        labels,
+        annotations,
+        state: state_str.to_string(),
+        active_at,
+        value: alert.value.to_string(),
+    }
 }
 
 /// 健康检查
@@ -826,4 +857,93 @@ pub async fn handle_build_info() -> Json<ApiResponse<BuildInfo>> {
     };
 
     Json(ApiResponse::success(info))
+}
+
+/// 存活检查（简化版）
+pub async fn handle_live() -> &'static str {
+    "OK\n"
+}
+
+/// 就绪检查（简化版）
+pub async fn handle_ready_check() -> &'static str {
+    "OK\n"
+}
+
+/// 状态配置
+pub async fn handle_status_config(
+    State(state): State<Arc<ServerState>>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let config = serde_json::json!({
+        "target_groups": [],
+        "scrape_configs": [],
+        "alerting": {},
+        "rule_files": [],
+        "remote_write": [],
+        "remote_read": [],
+    });
+
+    Json(ApiResponse::success(config))
+}
+
+/// 状态标志
+pub async fn handle_status_flags() -> Json<ApiResponse<serde_json::Value>> {
+    let flags = serde_json::json!({
+        "alertmanager.notification-queue-capacity": 10000,
+        "log.level": "info",
+        "storage.tsdb.retention.time": "15d",
+        "storage.tsdb.wal-compression": true,
+    });
+
+    Json(ApiResponse::success(flags))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_label_matchers_metric_only() {
+        let matchers = parse_label_matchers("http_requests_total");
+        assert_eq!(matchers.len(), 1);
+        assert_eq!(matchers[0], ("__name__".to_string(), "http_requests_total".to_string()));
+    }
+
+    #[test]
+    fn test_parse_label_matchers_with_labels() {
+        let matchers = parse_label_matchers("http_requests_total{method=\"GET\",status=\"200\"}");
+        assert!(matchers.contains(&("__name__".to_string(), "http_requests_total".to_string())));
+        assert!(matchers.contains(&("method".to_string(), "GET".to_string())));
+        assert!(matchers.contains(&("status".to_string(), "200".to_string())));
+    }
+
+    #[test]
+    fn test_parse_label_matchers_with_aggregation() {
+        let matchers = parse_label_matchers("sum(http_requests_total{method=\"GET\"})");
+        assert!(matchers.contains(&("__name__".to_string(), "http_requests_total".to_string())));
+        assert!(matchers.contains(&("method".to_string(), "GET".to_string())));
+    }
+
+    #[test]
+    fn test_parse_label_matchers_empty() {
+        let matchers = parse_label_matchers("");
+        assert!(matchers.is_empty());
+    }
+
+    #[test]
+    fn test_parse_label_matchers_single_label() {
+        let matchers = parse_label_matchers("metric{job=\"test\"}");
+        assert_eq!(matchers.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_label_matchers_label_with_single_quotes() {
+        let matchers = parse_label_matchers("metric{env='prod'}");
+        assert!(matchers.contains(&("env".to_string(), "prod".to_string())));
+    }
+
+    #[test]
+    fn test_parse_label_matchers_whitespace_handling() {
+        let matchers = parse_label_matchers("  http_requests_total  ");
+        assert!(matchers.contains(&("__name__".to_string(), "http_requests_total".to_string())));
+    }
 }

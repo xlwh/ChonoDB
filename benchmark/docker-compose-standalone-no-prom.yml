@@ -1,0 +1,43 @@
+services:
+  chronodb:
+    build:
+      context: ..
+      dockerfile: Dockerfile.local
+    container_name: bench-chronodb
+    ports:
+      - "19090:9090"
+      - "19091:9091"
+    volumes:
+      - chronodb-standalone-data:/var/lib/chronodb
+      - chronodb-standalone-logs:/var/log/chronodb
+      - ./config/chronodb-standalone.yaml:/etc/chronodb/chronodb.yaml:ro
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - bench-network
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: '8G'
+
+volumes:
+  chronodb-standalone-data:
+    driver: local
+  chronodb-standalone-logs:
+    driver: local
+
+networks:
+  bench-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16

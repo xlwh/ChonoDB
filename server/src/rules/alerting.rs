@@ -308,7 +308,6 @@ Annotations: {:?}",
 }
 
 impl AlertManager {
-    /// 添加控制台通知器
     pub fn add_console_notifier(&mut self) {
         self.add_notifier(Box::new(ConsoleNotifier));
     }
@@ -419,5 +418,143 @@ impl AlertNotifier for WebhookNotifier {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chronodb_storage::model::Label;
+
+    #[test]
+    fn test_alert_condition_default() {
+        let cond = AlertCondition::default();
+        assert!(matches!(cond, AlertCondition::Ne(0.0)));
+    }
+
+    #[test]
+    fn test_alert_condition_evaluation() {
+        assert!(matches!(AlertCondition::Gt(10.0), AlertCondition::Gt(_)));
+        assert!(matches!(AlertCondition::Gte(10.0), AlertCondition::Gte(_)));
+        assert!(matches!(AlertCondition::Lt(10.0), AlertCondition::Lt(_)));
+        assert!(matches!(AlertCondition::Lte(10.0), AlertCondition::Lte(_)));
+        assert!(matches!(AlertCondition::Eq(10.0), AlertCondition::Eq(_)));
+        assert!(matches!(AlertCondition::Ne(10.0), AlertCondition::Ne(_)));
+    }
+
+    #[test]
+    fn test_alert_state_equality() {
+        assert_eq!(AlertState::Inactive, AlertState::Inactive);
+        assert_eq!(AlertState::Pending, AlertState::Pending);
+        assert_eq!(AlertState::Firing, AlertState::Firing);
+        assert_ne!(AlertState::Inactive, AlertState::Firing);
+    }
+
+    #[test]
+    fn test_alert_manager_new() {
+        let manager = AlertManager::new();
+        assert_eq!(manager.get_alert_count(), 0);
+        assert!(manager.get_alerts().is_empty());
+    }
+
+    #[test]
+    fn test_alert_manager_default() {
+        let manager = AlertManager::default();
+        assert_eq!(manager.get_alert_count(), 0);
+    }
+
+    #[test]
+    fn test_add_alert() {
+        let mut manager = AlertManager::new();
+        let alert = Alert {
+            name: "HighCPU".to_string(),
+            state: AlertState::Firing,
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+            active_at: Some(SystemTime::now()),
+            last_evaluation: Some(SystemTime::now()),
+            value: 95.0,
+        };
+        manager.add_alert(alert);
+        assert_eq!(manager.get_alert_count(), 1);
+    }
+
+    #[test]
+    fn test_get_active_alerts() {
+        let mut manager = AlertManager::new();
+
+        let firing_alert = Alert {
+            name: "HighCPU".to_string(),
+            state: AlertState::Firing,
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+            active_at: Some(SystemTime::now()),
+            last_evaluation: Some(SystemTime::now()),
+            value: 95.0,
+        };
+
+        let pending_alert = Alert {
+            name: "HighMemory".to_string(),
+            state: AlertState::Pending,
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+            active_at: Some(SystemTime::now()),
+            last_evaluation: Some(SystemTime::now()),
+            value: 80.0,
+        };
+
+        manager.add_alert(firing_alert);
+        manager.add_alert(pending_alert);
+
+        assert_eq!(manager.get_active_alert_count(), 1);
+        assert_eq!(manager.get_active_alerts().len(), 1);
+    }
+
+    #[test]
+    fn test_create_alert() {
+        let mut manager = AlertManager::new();
+        let labels = vec![Label::new("job", "test")];
+        let annotations = HashMap::new();
+
+        manager.create_alert("TestAlert".to_string(), labels, 42.0, 1000, annotations);
+        assert_eq!(manager.get_alert_count(), 1);
+
+        let alerts = manager.get_alerts();
+        assert_eq!(alerts[0].name, "TestAlert");
+        assert_eq!(alerts[0].value, 42.0);
+        assert_eq!(alerts[0].state, AlertState::Pending);
+    }
+
+    #[test]
+    fn test_create_alert_update_existing() {
+        let mut manager = AlertManager::new();
+        let labels = vec![Label::new("job", "test")];
+        let annotations = HashMap::new();
+
+        manager.create_alert("TestAlert".to_string(), labels.clone(), 42.0, 1000, annotations.clone());
+        manager.create_alert("TestAlert".to_string(), labels, 50.0, 2000, annotations);
+
+        assert_eq!(manager.get_alert_count(), 1);
+        assert_eq!(manager.get_alerts()[0].value, 50.0);
+    }
+
+    #[test]
+    fn test_alert_rule_serialization() {
+        let rule = AlertRule {
+            name: "HighCPU".to_string(),
+            expr: "cpu_usage > 90".to_string(),
+            condition: AlertCondition::Gt(90.0),
+            duration: Duration::from_secs(300),
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+        };
+        assert_eq!(rule.name, "HighCPU");
+        assert_eq!(rule.expr, "cpu_usage > 90");
+    }
+
+    #[test]
+    fn test_add_console_notifier() {
+        let mut manager = AlertManager::new();
+        manager.add_console_notifier();
     }
 }

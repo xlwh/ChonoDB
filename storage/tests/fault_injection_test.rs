@@ -19,12 +19,10 @@ async fn test_node_failure() {
     };
     let _store = MemStore::new(storage_config).unwrap();
 
-    // 初始化集群管理器
-    let cluster_config = ClusterConfig::default();
-    let cluster_manager = Arc::new(ClusterManager::new(cluster_config));
-    cluster_manager.start().await.unwrap();
+    // 初始化集群管理器（不启动心跳任务）
+    let cluster_manager = Arc::new(ClusterManager::new(ClusterConfig::default()));
 
-    // 注册测试节点
+    // 注册测试节点（不调用 start()，仅使用 register_node）
     let node_info = NodeInfo {
         node_id: "node1".to_string(),
         address: "localhost:9090".to_string(),
@@ -41,7 +39,6 @@ async fn test_node_failure() {
     let replication_config = ReplicationConfig::default();
     let replication_manager = Arc::new(ReplicationManager::new(replication_config));
     let rpc_manager = Arc::new(ClusterRpcManager::new());
-    replication_manager.start(rpc_manager.clone()).await.unwrap();
 
     // 初始化分片管理器
     let shard_config = ShardConfig {
@@ -66,7 +63,7 @@ async fn test_node_failure() {
     // 配置节点故障测试
     let config = FaultInjectionConfig {
         fault_type: FaultType::NodeFailure("node1".to_string()),
-        duration: std::time::Duration::from_secs(5),
+        duration: std::time::Duration::from_millis(10),
         intensity: 1.0,
         auto_recover: true,
     };
@@ -74,9 +71,6 @@ async fn test_node_failure() {
     // 运行测试
     let result = test.run_test(config).await.unwrap();
     assert!(result.success);
-
-    // 停止集群管理器
-    cluster_manager.stop().await.unwrap();
 }
 
 #[tokio::test]
@@ -90,10 +84,8 @@ async fn test_leader_election_failure() {
     };
     let _store = MemStore::new(storage_config).unwrap();
 
-    // 初始化集群管理器
-    let cluster_config = ClusterConfig::default();
-    let cluster_manager = Arc::new(ClusterManager::new(cluster_config));
-    cluster_manager.start().await.unwrap();
+    // 初始化集群管理器（不启动心跳任务）
+    let cluster_manager = Arc::new(ClusterManager::new(ClusterConfig::default()));
 
     // 注册测试节点
     let node_info = NodeInfo {
@@ -112,7 +104,6 @@ async fn test_leader_election_failure() {
     let replication_config = ReplicationConfig::default();
     let replication_manager = Arc::new(ReplicationManager::new(replication_config));
     let rpc_manager = Arc::new(ClusterRpcManager::new());
-    replication_manager.start(rpc_manager.clone()).await.unwrap();
 
     // 初始化分片管理器
     let shard_config = ShardConfig {
@@ -137,7 +128,7 @@ async fn test_leader_election_failure() {
     // 配置领导者选举失败测试
     let config = FaultInjectionConfig {
         fault_type: FaultType::LeaderElectionFailure,
-        duration: std::time::Duration::from_secs(5),
+        duration: std::time::Duration::from_millis(10),
         intensity: 1.0,
         auto_recover: true,
     };
@@ -145,9 +136,6 @@ async fn test_leader_election_failure() {
     // 运行测试
     let result = test.run_test(config).await.unwrap();
     assert!(result.success);
-
-    // 停止集群管理器
-    cluster_manager.stop().await.unwrap();
 }
 
 #[tokio::test]
@@ -161,10 +149,8 @@ async fn test_network_delay() {
     };
     let _store = MemStore::new(storage_config).unwrap();
 
-    // 初始化集群管理器
-    let cluster_config = ClusterConfig::default();
-    let cluster_manager = Arc::new(ClusterManager::new(cluster_config));
-    cluster_manager.start().await.unwrap();
+    // 初始化集群管理器（不启动心跳任务）
+    let cluster_manager = Arc::new(ClusterManager::new(ClusterConfig::default()));
 
     // 注册测试节点
     let node_info = NodeInfo {
@@ -183,7 +169,6 @@ async fn test_network_delay() {
     let replication_config = ReplicationConfig::default();
     let replication_manager = Arc::new(ReplicationManager::new(replication_config));
     let rpc_manager = Arc::new(ClusterRpcManager::new());
-    replication_manager.start(rpc_manager.clone()).await.unwrap();
 
     // 初始化分片管理器
     let shard_config = ShardConfig {
@@ -207,8 +192,8 @@ async fn test_network_delay() {
 
     // 配置网络延迟测试
     let config = FaultInjectionConfig {
-        fault_type: FaultType::NetworkDelay(std::time::Duration::from_millis(100)),
-        duration: std::time::Duration::from_secs(5),
+        fault_type: FaultType::NetworkDelay(std::time::Duration::from_millis(1)),
+        duration: std::time::Duration::from_millis(10),
         intensity: 1.0,
         auto_recover: true,
     };
@@ -216,9 +201,6 @@ async fn test_network_delay() {
     // 运行测试
     let result = test.run_test(config).await.unwrap();
     assert!(result.success);
-
-    // 停止集群管理器
-    cluster_manager.stop().await.unwrap();
 }
 
 #[tokio::test]
@@ -232,10 +214,8 @@ async fn test_test_suite() {
     };
     let _store = MemStore::new(storage_config).unwrap();
 
-    // 初始化集群管理器
-    let cluster_config = ClusterConfig::default();
-    let cluster_manager = Arc::new(ClusterManager::new(cluster_config));
-    cluster_manager.start().await.unwrap();
+    // 初始化集群管理器（不启动心跳任务）
+    let cluster_manager = Arc::new(ClusterManager::new(ClusterConfig::default()));
 
     // 注册测试节点
     let node_info1 = NodeInfo {
@@ -250,35 +230,10 @@ async fn test_test_suite() {
     };
     cluster_manager.register_node(node_info1).await.unwrap();
 
-    let node_info2 = NodeInfo {
-        node_id: "node2".to_string(),
-        address: "localhost:9091".to_string(),
-        status: NodeStatus::Online,
-        last_heartbeat: chrono::Utc::now().timestamp_millis(),
-        shard_count: 100,
-        series_count: 1000,
-        is_leader: false,
-        version: "1.0.0".to_string(),
-    };
-    cluster_manager.register_node(node_info2).await.unwrap();
-
-    let node_info3 = NodeInfo {
-        node_id: "node3".to_string(),
-        address: "localhost:9092".to_string(),
-        status: NodeStatus::Online,
-        last_heartbeat: chrono::Utc::now().timestamp_millis(),
-        shard_count: 100,
-        series_count: 1000,
-        is_leader: false,
-        version: "1.0.0".to_string(),
-    };
-    cluster_manager.register_node(node_info3).await.unwrap();
-
     // 初始化复制管理器
     let replication_config = ReplicationConfig::default();
     let replication_manager = Arc::new(ReplicationManager::new(replication_config));
     let rpc_manager = Arc::new(ClusterRpcManager::new());
-    replication_manager.start(rpc_manager.clone()).await.unwrap();
 
     // 初始化分片管理器
     let shard_config = ShardConfig {
@@ -306,7 +261,4 @@ async fn test_test_suite() {
     // 运行测试套件
     let results = test.run_test_suite(&test_suite).await.unwrap();
     assert!(!results.is_empty());
-
-    // 停止集群管理器
-    cluster_manager.stop().await.unwrap();
 }

@@ -70,18 +70,18 @@ fn parse_duration(duration: &str) -> Option<u64> {
         return Some(value);
     }
 
-    if let Some((value, unit)) = duration.rsplit_once(|c: char| !c.is_ascii_digit()) {
-        if let Ok(value) = value.parse::<u64>() {
-            match unit.trim() {
-                "ms" => Some(value),
-                "s" => Some(value * 1000),
-                "m" => Some(value * 60 * 1000),
-                "h" => Some(value * 60 * 60 * 1000),
-                "d" => Some(value * 24 * 60 * 60 * 1000),
-                _ => None,
-            }
-        } else {
-            None
+    let split_pos = duration.find(|c: char| !c.is_ascii_digit())?;
+    let value_str = &duration[..split_pos];
+    let unit = &duration[split_pos..];
+
+    if let Ok(value) = value_str.parse::<u64>() {
+        match unit.trim() {
+            "ms" => Some(value),
+            "s" => Some(value * 1000),
+            "m" => Some(value * 60 * 1000),
+            "h" => Some(value * 60 * 60 * 1000),
+            "d" => Some(value * 24 * 60 * 60 * 1000),
+            _ => None,
         }
     } else {
         None
@@ -447,5 +447,126 @@ impl ReplicationManager {
             worker.abort();
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_replication_config_default() {
+        let config = ReplicationConfig::default();
+        assert_eq!(config.replication_factor, 3);
+        assert_eq!(config.min_write_replicas, 2);
+        assert_eq!(config.min_read_replicas, 1);
+        assert!(config.async_replication);
+        assert_eq!(config.replication_timeout_ms, 5000);
+        assert_eq!(config.replication_queue_size, 10000);
+        assert_eq!(config.batch_size, 100);
+    }
+
+    #[test]
+    fn test_replication_status() {
+        assert_eq!(ReplicationStatus::Pending, ReplicationStatus::Pending);
+        assert_eq!(ReplicationStatus::Completed, ReplicationStatus::Completed);
+        assert_ne!(ReplicationStatus::Pending, ReplicationStatus::Failed);
+    }
+
+    #[test]
+    fn test_replication_metrics_default() {
+        let metrics = ReplicationMetrics::default();
+        assert_eq!(metrics.total_replications, 0);
+        assert_eq!(metrics.successful_replications, 0);
+        assert_eq!(metrics.failed_replications, 0);
+        assert_eq!(metrics.replication_latency_ms, 0.0);
+        assert_eq!(metrics.queue_size, 0);
+    }
+
+    #[test]
+    fn test_replica_placement() {
+        let placement = ReplicaPlacement {
+            shard_id: 1,
+            primary_node: "node-1".to_string(),
+            replica_nodes: vec!["node-2".to_string(), "node-3".to_string()],
+        };
+        assert_eq!(placement.shard_id, 1);
+        assert_eq!(placement.primary_node, "node-1");
+        assert_eq!(placement.replica_nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_replication_task() {
+        let task = ReplicationTask {
+            shard_id: 1,
+            series: TimeSeries::new(1, vec![]),
+            target_nodes: vec!["node-2".to_string()],
+            retry_count: 0,
+            max_retries: 3,
+        };
+        assert_eq!(task.shard_id, 1);
+        assert_eq!(task.retry_count, 0);
+        assert_eq!(task.max_retries, 3);
+    }
+
+    #[test]
+    fn test_parse_duration() {
+        assert_eq!(parse_duration("1000"), Some(1000));
+        assert_eq!(parse_duration("500ms"), Some(500));
+        assert_eq!(parse_duration("5s"), Some(5000));
+        assert_eq!(parse_duration("1m"), Some(60000));
+        assert_eq!(parse_duration("1h"), Some(3600000));
+        assert_eq!(parse_duration("1d"), Some(86400000));
+        assert_eq!(parse_duration(""), None);
+        assert_eq!(parse_duration("abc"), None);
+    }
+
+    #[tokio::test]
+    async fn test_replication_manager_new() {
+        let config = ReplicationConfig::default();
+        let manager = ReplicationManager::new(config);
+        let metrics = manager.get_metrics().await.unwrap();
+        assert_eq!(metrics.total_replications, 0);
+    }
+
+    #[tokio::test]
+    async fn test_log_replication() {
+        let config = ReplicationConfig::default();
+        let manager = ReplicationManager::new(config);
+
+        let series = TimeSeries::new(1, vec![]);
+        manager.log_replication(1, series).await.unwrap();
+
+        let status = manager.get_replication_status(1).await.unwrap();
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0].shard_id, 1);
+        assert_eq!(status[0].status, ReplicationStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn test_replicate_empty_targets() {
+        let config = ReplicationConfig::default();
+        let manager = ReplicationManager::new(config);
+
+        let series = TimeSeries::new(1, vec![]);
+        let result = manager.replicate(1, series, &[]).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_replication_status_empty() {
+        let config = ReplicationConfig::default();
+        let manager = ReplicationManager::new(config);
+
+        let status = manager.get_replication_status(999).await.unwrap();
+        assert!(status.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_stop_without_start() {
+        let config = ReplicationConfig::default();
+        let manager = ReplicationManager::new(config);
+        let result = manager.stop().await;
+        assert!(result.is_ok());
     }
 }
