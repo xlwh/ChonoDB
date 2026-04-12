@@ -224,11 +224,15 @@ mod tests {
 
     fn create_test_store() -> Arc<MemStore> {
         let temp_dir = tempdir().unwrap();
+        let data_dir = temp_dir.path().to_string_lossy().to_string();
+        std::fs::create_dir_all(&data_dir).unwrap();
         let config = StorageConfig {
-            data_dir: temp_dir.path().to_string_lossy().to_string(),
+            data_dir,
             ..Default::default()
         };
-        Arc::new(MemStore::new(config).unwrap())
+        let store = Arc::new(MemStore::new(config).unwrap());
+        std::mem::forget(temp_dir);
+        store
     }
 
     #[tokio::test]

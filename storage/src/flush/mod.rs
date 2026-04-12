@@ -156,6 +156,8 @@ impl FlushManager {
 
         memstore.flush()?;
 
+        memstore.remove_series_batch(&series_ids)?;
+
         info!(
             "Flushed block {}: {} series, {} samples, time range [{}, {}]",
             block_id, total_series, total_samples, min_ts, max_ts

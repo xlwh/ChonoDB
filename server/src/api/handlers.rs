@@ -7,10 +7,12 @@ use chrono;
 use parse_duration::parse;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::SystemTime;
 use tracing::{error, warn};
 
 use crate::api::response::*;
 use crate::state::ServerState;
+use crate::rules::alerting;
 
 /// 处理即时查询（GET方法）
 pub async fn handle_query_get(
@@ -95,14 +97,9 @@ async fn handle_query_internal(
     // 简单的标签匹配解析（实际项目中需要更复杂的PromQL解析）
     let label_matchers = parse_label_matchers(processed_query);
 
-    // 验证时间范围
-    let start_time = time - 3600000; // 过去1小时
-    if start_time < 0 {
-        return Json(ApiResponse::error(
-            "bad_data",
-            "Invalid time range: start time cannot be negative",
-        ));
-    }
+    // 即时查询使用从时间戳最小值到指定时间的范围
+    // 这样可以查询所有时间的数据，而不仅仅是过去1小时
+    let start_time = i64::MIN;
 
     // 使用内存存储查询数据
     let result = match state.memstore.query(&label_matchers, start_time, time) {
@@ -770,14 +767,48 @@ pub async fn handle_rules(
 pub async fn handle_alerts(
     State(state): State<Arc<ServerState>>,
 ) -> Json<ApiResponse<HashMap<String, Vec<Alert>>>> {
-    let _alert_manager = state.alert_manager.read().await;
+    let alert_manager = state.alert_manager.read().await;
 
-    let alerts: Vec<Alert> = vec![]; // TODO: 从 alert_manager 获取实际告警
+    let alerts: Vec<Alert> = alert_manager.get_alerts()
+        .iter()
+        .map(|alert| convert_alert(alert))
+        .collect();
 
     let mut data = HashMap::new();
     data.insert("alerts".to_string(), alerts);
 
     Json(ApiResponse::success(data))
+}
+
+fn convert_alert(alert: &alerting::Alert) -> Alert {
+    let labels: serde_json::Map<String, serde_json::Value> = alert.labels
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+        .collect();
+    
+    let annotations: serde_json::Map<String, serde_json::Value> = alert.annotations
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+        .collect();
+
+    let state_str = match alert.state {
+        alerting::AlertState::Inactive => "inactive",
+        alerting::AlertState::Pending => "pending",
+        alerting::AlertState::Firing => "firing",
+    };
+
+    let active_at = alert.active_at.as_ref().map(|t| {
+        let dt = chrono::DateTime::<chrono::Utc>::from(*t);
+        dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    });
+
+    Alert {
+        labels,
+        annotations,
+        state: state_str.to_string(),
+        active_at,
+        value: alert.value.to_string(),
+    }
 }
 
 /// 健康检查

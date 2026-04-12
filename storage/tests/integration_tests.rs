@@ -9,14 +9,23 @@ use chronodb_storage::rpc::ClusterRpcManager;
 use std::sync::Arc;
 use tempfile::tempdir;
 
+struct TestStore {
+    store: Arc<MemStore>,
+    _temp_dir: tempfile::TempDir,
+}
+
 /// 集成测试辅助函数
-fn create_test_store() -> Arc<MemStore> {
+fn create_test_store_with_tempdir() -> TestStore {
     let temp_dir = tempdir().unwrap();
     let config = StorageConfig {
         data_dir: temp_dir.path().to_string_lossy().to_string(),
         ..Default::default()
     };
-    Arc::new(MemStore::new(config).unwrap())
+    let store = Arc::new(MemStore::new(config).unwrap());
+    TestStore {
+        store,
+        _temp_dir: temp_dir,
+    }
 }
 
 fn create_test_series(id: u64, name: &str, job: &str, instance: &str) -> TimeSeries {
@@ -37,7 +46,8 @@ fn create_test_series(id: u64, name: &str, job: &str, instance: &str) -> TimeSer
 
 #[test]
 fn test_write_and_read() {
-    let store = create_test_store();
+    let test_store = create_test_store_with_tempdir();
+    let store = test_store.store;
 
     // 写入数据
     let labels = vec![
@@ -63,7 +73,8 @@ fn test_write_and_read() {
 
 #[test]
 fn test_query_by_label() {
-    let store = create_test_store();
+    let test_store = create_test_store_with_tempdir();
+    let store = test_store.store;
 
     // 写入多个系列
     let series1 = create_test_series(1, "metric1", "job1", "instance1");
@@ -84,7 +95,8 @@ fn test_query_by_label() {
 
 #[test]
 fn test_query_time_range() {
-    let store = create_test_store();
+    let test_store = create_test_store_with_tempdir();
+    let store = test_store.store;
 
     let labels = vec![
         Label::new("__name__", "test_metric"),
@@ -111,7 +123,8 @@ fn test_query_time_range() {
 
 #[tokio::test]
 async fn test_query_engine() {
-    let store = create_test_store();
+    let test_store = create_test_store_with_tempdir();
+    let store = test_store.store;
     let engine = QueryEngine::new(store.clone());
 
     // 写入测试数据
@@ -136,7 +149,8 @@ async fn test_query_engine() {
 
 #[test]
 fn test_downsample_query() {
-    let store = create_test_store();
+    let test_store = create_test_store_with_tempdir();
+    let store = test_store.store;
 
     // 写入大量数据
     let labels = vec![
@@ -167,7 +181,8 @@ fn test_downsample_query() {
 
 #[test]
 fn test_prometheus_compatibility() {
-    let store = create_test_store();
+    let test_store = create_test_store_with_tempdir();
+    let store = test_store.store;
 
     // 写入Prometheus格式的数据
     let labels = vec![
@@ -205,7 +220,8 @@ fn test_prometheus_compatibility() {
 fn test_concurrent_writes() {
     use std::thread;
 
-    let store = create_test_store();
+    let test_store = create_test_store_with_tempdir();
+    let store = test_store.store;
     let mut handles = vec![];
 
     for i in 0..10 {

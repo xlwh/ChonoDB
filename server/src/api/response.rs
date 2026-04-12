@@ -172,11 +172,11 @@ pub enum Rule {
 /// 告警
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alert {
-    labels: serde_json::Map<String, serde_json::Value>,
-    annotations: serde_json::Map<String, serde_json::Value>,
-    state: String,
-    active_at: Option<String>,
-    value: String,
+    pub labels: serde_json::Map<String, serde_json::Value>,
+    pub annotations: serde_json::Map<String, serde_json::Value>,
+    pub state: String,
+    pub active_at: Option<String>,
+    pub value: String,
 }
 
 /// 运行时信息

@@ -175,14 +175,14 @@ impl ObjectStorage {
     }
 
     /// 上传大对象（分块上传）
-    pub async fn put_large_object(&self, key: &str, data: Bytes, chunk_size: usize) -> Result<()> {
+    pub async fn put_large_object(&self, key: &str, data: Bytes, _chunk_size: usize) -> Result<()> {
         // 这里可以实现分块上传逻辑
         // 简化实现，直接调用 put
         self.put(key, data).await
     }
 
     /// 下载大对象（分块下载）
-    pub async fn get_large_object(&self, key: &str, chunk_size: usize) -> Result<Bytes> {
+    pub async fn get_large_object(&self, key: &str, _chunk_size: usize) -> Result<Bytes> {
         // 这里可以实现分块下载逻辑
         // 简化实现，直接调用 get
         self.get(key).await

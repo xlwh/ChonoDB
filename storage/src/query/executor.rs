@@ -196,19 +196,27 @@ impl QueryExecutor {
             return Ok(Vec::new());
         }
         
-        // Sum aggregation by timestamp using BTreeMap for automatic sorting
-        let mut timestamp_sums: BTreeMap<i64, f64> = BTreeMap::new();
+        // Parallel sum aggregation by timestamp
+        let timestamp_sums: BTreeMap<i64, f64> = series.par_iter()
+            .map(|ts| {
+                ts.samples.iter()
+                    .map(|s| (s.timestamp, s.value))
+                    .fold(BTreeMap::new(), |mut acc, (ts, val)| {
+                        *acc.entry(ts).or_insert(0.0) += val;
+                        acc
+                    })
+            })
+            .reduce(
+                || BTreeMap::new(),
+                |mut a, b| {
+                    for (ts, val) in b {
+                        *a.entry(ts).or_insert(0.0) += val;
+                    }
+                    a
+                }
+            );
         
-        for ts in &series {
-            for sample in &ts.samples {
-                *timestamp_sums.entry(sample.timestamp).or_insert(0.0) += sample.value;
-            }
-        }
-        
-        // Create a new time series with the summed values
         let mut sum_series = TimeSeries::new(0, series[0].labels.clone());
-        
-        // BTreeMap is already sorted by timestamp
         for (timestamp, value) in timestamp_sums {
             sum_series.add_sample(Sample::new(timestamp, value));
         }
@@ -227,20 +235,22 @@ impl QueryExecutor {
             return Ok(Vec::new());
         }
         
-        let mut sum_series = TimeSeries::new(0, series[0].labels.clone());
-        let mut count = 0;
+        // Parallel average calculation
+        let (total_sum, total_count): (f64, usize) = series.par_iter()
+            .map(|ts| {
+                let sum: f64 = ts.samples.iter().map(|s| s.value).sum();
+                (sum, ts.samples.len())
+            })
+            .reduce(
+                || (0.0, 0),
+                |(sum1, count1), (sum2, count2)| (sum1 + sum2, count1 + count2)
+            );
         
-        for ts in &series {
-            for sample in &ts.samples {
-                sum_series.add_sample(sample.clone());
-                count += 1;
-            }
-        }
-        
-        if count > 0 {
-            let avg = sum_series.samples.iter().map(|s| s.value).sum::<f64>() / count as f64;
-            sum_series.samples = vec![Sample::new(ctx.start, avg)];
-            Ok(vec![sum_series])
+        if total_count > 0 {
+            let avg = total_sum / total_count as f64;
+            let mut avg_series = TimeSeries::new(0, series[0].labels.clone());
+            avg_series.add_sample(Sample::new(ctx.start, avg));
+            Ok(vec![avg_series])
         } else {
             Ok(Vec::new())
         }
@@ -257,10 +267,10 @@ impl QueryExecutor {
             return Ok(Vec::new());
         }
         
-        let min = series.iter()
-            .flat_map(|ts| ts.samples.iter())
-            .map(|s| s.value)
-            .fold(f64::MAX, f64::min);
+        // Parallel min calculation
+        let min = series.par_iter()
+            .map(|ts| ts.samples.iter().map(|s| s.value).fold(f64::MAX, f64::min))
+            .reduce(|| f64::MAX, f64::min);
         
         let mut min_series = TimeSeries::new(0, series[0].labels.clone());
         min_series.add_sample(Sample::new(ctx.start, min));
@@ -279,10 +289,10 @@ impl QueryExecutor {
             return Ok(Vec::new());
         }
         
-        let max = series.iter()
-            .flat_map(|ts| ts.samples.iter())
-            .map(|s| s.value)
-            .fold(f64::MIN, f64::max);
+        // Parallel max calculation
+        let max = series.par_iter()
+            .map(|ts| ts.samples.iter().map(|s| s.value).fold(f64::MIN, f64::max))
+            .reduce(|| f64::MIN, f64::max);
         
         let mut max_series = TimeSeries::new(0, series[0].labels.clone());
         max_series.add_sample(Sample::new(ctx.start, max));
@@ -297,7 +307,8 @@ impl QueryExecutor {
         
         let series = self.execute_plan(&plan.args[0].plan_type, ctx).await?;
         
-        let count = series.iter().map(|ts| ts.samples.len()).sum::<usize>();
+        // Parallel count calculation
+        let count = series.par_iter().map(|ts| ts.samples.len()).sum::<usize>();
         
         if count > 0 {
             let mut count_series = TimeSeries::new(0, series[0].labels.clone());
@@ -1362,11 +1373,17 @@ mod tests {
 
     fn create_test_store() -> Arc<MemStore> {
         let temp_dir = tempdir().unwrap();
+        let data_dir = temp_dir.path().to_string_lossy().to_string();
+        // 创建数据目录确保存在
+        std::fs::create_dir_all(&data_dir).unwrap();
         let config = StorageConfig {
-            data_dir: temp_dir.path().to_string_lossy().to_string(),
+            data_dir,
             ..Default::default()
         };
-        Arc::new(MemStore::new(config).unwrap())
+        let store = Arc::new(MemStore::new(config).unwrap());
+        // 保持 temp_dir 存活直到 store 被销毁
+        std::mem::forget(temp_dir);
+        store
     }
 
     #[tokio::test]

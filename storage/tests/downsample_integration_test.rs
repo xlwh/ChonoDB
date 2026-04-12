@@ -10,13 +10,22 @@ use chronodb_storage::columnstore::DownsampleLevel;
 use std::sync::Arc;
 use tempfile::tempdir;
 
-fn create_test_store() -> Arc<MemStore> {
+struct TestStore {
+    store: Arc<MemStore>,
+    _temp_dir: tempfile::TempDir,
+}
+
+fn create_test_store_with_tempdir() -> TestStore {
     let temp_dir = tempdir().unwrap();
     let config = StorageConfig {
         data_dir: temp_dir.path().to_string_lossy().to_string(),
         ..Default::default()
     };
-    Arc::new(MemStore::new(config).unwrap())
+    let store = Arc::new(MemStore::new(config).unwrap());
+    TestStore {
+        store,
+        _temp_dir: temp_dir,
+    }
 }
 
 #[test]
@@ -97,7 +106,8 @@ fn test_downsample_scheduler_basic() {
 
 #[test]
 fn test_downsample_with_query() {
-    let store = create_test_store();
+    let test_store = create_test_store_with_tempdir();
+    let store = test_store.store;
     
     // 写入适量数据，避免超时
     let labels = vec![
@@ -125,7 +135,8 @@ fn test_downsample_with_query() {
 #[tokio::test]
 async fn test_downsample_manager() {
     let temp_dir = tempdir().unwrap();
-    let store = create_test_store();
+    let test_store = create_test_store_with_tempdir();
+    let store = test_store.store;
     
     // 创建降采样管理器
     let config = DownsampleConfig::default();
@@ -182,7 +193,8 @@ fn test_downsample_boundary_conditions() {
 #[tokio::test]
 async fn test_downsample_worker() {
     let temp_dir = tempdir().unwrap();
-    let store = create_test_store();
+    let test_store = create_test_store_with_tempdir();
+    let store = test_store.store;
     
     // 创建工作器
     let worker = DownsampleWorker::new(0, store.clone(), temp_dir.path().to_path_buf());

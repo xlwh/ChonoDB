@@ -32,16 +32,19 @@ impl InvertedIndex {
     }
 
     fn add_label_entry(&self, name: &str, value: &str, series_id: TimeSeriesId) {
-        let values_map = self
+        let name_str = name.to_string();
+        let value_str = value.to_string();
+        
+        let mut values_map = self
             .label_name_to_values
-            .entry(name.to_string())
-            .or_insert_with(DashMap::new);
+            .entry(name_str)
+            .or_insert(DashMap::new());
         
         let mut series_set = values_map
-            .entry(value.to_string())
-            .or_insert_with(BTreeSet::new);
+            .entry(value_str)
+            .or_insert(BTreeSet::new());
         
-        series_set.insert(series_id);
+        (&mut *series_set).insert(series_id);
     }
 
     pub fn remove_series(&self, series_id: TimeSeriesId) -> Result<()> {

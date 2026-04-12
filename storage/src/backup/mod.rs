@@ -318,18 +318,14 @@ impl BackupManager {
         }
 
         // 检查文件完整性
-        let mut files_checked = 0;
         for entry in walkdir::WalkDir::new(backup_path) {
             let entry: walkdir::DirEntry = entry?;
             let path = entry.path();
 
             if path.is_file() && path != metadata_path {
                 // 检查文件是否可读
-                match std::fs::File::open(path) {
-                    Ok(_) => files_checked += 1,
-                    Err(e) => {
-                        errors.push(format!("Cannot read file {:?}: {}", path, e));
-                    }
+                if let Err(e) = std::fs::File::open(path) {
+                    errors.push(format!("Cannot read file {:?}: {}", path, e));
                 }
             }
         }

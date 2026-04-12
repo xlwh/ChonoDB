@@ -31,9 +31,9 @@ impl Default for ClusterConfig {
 }
 
 impl ClusterConfig {
-    pub fn from_yaml_config(yaml_config: &crate::config::ClusterConfigYaml) -> Self {
+    pub fn from_yaml_config(yaml_config: &crate::config::ClusterConfigYaml, cluster_name: String) -> Self {
         Self {
-            cluster_name: "chronodb-cluster".to_string(),
+            cluster_name,
             heartbeat_interval_ms: yaml_config.heartbeat_interval_ms,
             node_timeout_ms: yaml_config.node_timeout_ms,
             discovery_addresses: yaml_config.discovery_addresses.clone(),
@@ -687,45 +687,57 @@ async fn discover_nodes(addr: &str, nodes: &Arc<RwLock<HashMap<String, NodeInfo>
 
     if let Ok(socket_addr) = addr.parse::<std::net::SocketAddr>() {
         let client = crate::rpc::RpcClient::new(socket_addr);
-
-        match client.get_cluster_status().await {
-            Ok(cluster_status) => {
-                info!("Successfully discovered cluster from {}", addr);
-
-                let mut nodes_write = nodes.write().await;
-                for node_info in cluster_status.nodes {
-                    let node_id_clone = node_info.node_id.clone();
-                    let node = NodeInfo {
-                        node_id: node_info.node_id,
-                        address: node_info.address,
-                        status: match node_info.status {
-                            crate::rpc::NodeStatus::Online => NodeStatus::Online,
-                            crate::rpc::NodeStatus::Offline => NodeStatus::Offline,
-                            crate::rpc::NodeStatus::Suspect => NodeStatus::Degraded,
-                        },
-                        last_heartbeat: node_info.last_heartbeat,
-                        shard_count: 0,
-                        series_count: 0,
-                        is_leader: cluster_status.is_coordinator && cluster_status.node_id == node_id_clone,
-                        version: "1.0.0".to_string(),
-                    };
-
-                    let node_id = node.node_id.clone();
-                    if !nodes_write.contains_key(&node_id) {
-                        nodes_write.insert(node_id.clone(), node);
-                        info!("Discovered new node: {}", node_id);
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Failed to discover nodes from {}: {}", addr, e);
-            }
-        }
+        perform_discovery(client, addr, nodes).await;
     } else {
-        debug!("Address {} is not a socket address, trying other discovery methods", addr);
+        debug!("Address {} is not a socket address, trying DNS resolution", addr);
+        
+        if let Ok(socket_addrs) = tokio::net::lookup_host(addr).await {
+            for socket_addr in socket_addrs {
+                let client = crate::rpc::RpcClient::new(socket_addr);
+                perform_discovery(client, &socket_addr.to_string(), nodes).await;
+            }
+        } else {
+            warn!("Failed to resolve address: {}", addr);
+        }
     }
 
     Ok(())
+}
+
+async fn perform_discovery(client: crate::rpc::RpcClient, addr: &str, nodes: &Arc<RwLock<HashMap<String, NodeInfo>>>) {
+    match client.get_cluster_status().await {
+        Ok(cluster_status) => {
+            info!("Successfully discovered cluster from {}", addr);
+
+            let mut nodes_write = nodes.write().await;
+            for node_info in cluster_status.nodes {
+                let node_id_clone = node_info.node_id.clone();
+                let node = NodeInfo {
+                    node_id: node_info.node_id,
+                    address: node_info.address,
+                    status: match node_info.status {
+                        crate::rpc::NodeStatus::Online => NodeStatus::Online,
+                        crate::rpc::NodeStatus::Offline => NodeStatus::Offline,
+                        crate::rpc::NodeStatus::Suspect => NodeStatus::Degraded,
+                    },
+                    last_heartbeat: node_info.last_heartbeat,
+                    shard_count: 0,
+                    series_count: 0,
+                    is_leader: cluster_status.is_coordinator && cluster_status.node_id == node_id_clone,
+                    version: "1.0.0".to_string(),
+                };
+
+                let node_id = node.node_id.clone();
+                if !nodes_write.contains_key(&node_id) {
+                    nodes_write.insert(node_id.clone(), node);
+                    info!("Discovered new node: {}", node_id);
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to discover nodes from {}: {}", addr, e);
+        }
+    }
 }
 
 #[cfg(test)]

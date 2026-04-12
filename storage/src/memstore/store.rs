@@ -67,17 +67,45 @@ impl MemStore {
         }
 
         samples.sort_by_key(|s| s.timestamp);
+        let sample_count = samples.len();
 
         for sample in samples {
             self.head.add_sample(series_id, sample)?;
-
-            let mut stats = self.stats.write();
-            stats.total_samples += 1;
-            stats.writes += 1;
         }
 
         {
             let mut stats = self.stats.write();
+            stats.total_samples += sample_count as u64;
+            stats.writes += 1;
+            stats.total_series = self.head.series_count() as u64;
+        }
+
+        Ok(())
+    }
+
+    pub fn write_batch(&self, batch: Vec<(Labels, Vec<Sample>)>) -> Result<()> {
+        let batch_len = batch.len();
+        let mut total_samples = 0;
+
+        for (labels, mut samples) in batch {
+            let series_id = self.head.get_or_create_series(labels.clone())?;
+
+            if let Some(ref wal) = self.wal {
+                wal.log_write(series_id, &labels, &samples)?;
+            }
+
+            samples.sort_by_key(|s| s.timestamp);
+            total_samples += samples.len();
+
+            for sample in samples {
+                self.head.add_sample(series_id, sample)?;
+            }
+        }
+
+        {
+            let mut stats = self.stats.write();
+            stats.total_samples += total_samples as u64;
+            stats.writes += batch_len as u64;
             stats.total_series = self.head.series_count() as u64;
         }
 
@@ -101,7 +129,14 @@ impl MemStore {
 
     /// 根据时间范围自动选择降采样级别
     fn auto_select_downsample_level(&self, start: i64, end: i64) -> DownsampleLevel {
-        let duration = end - start;
+        // 使用 checked_sub 避免溢出
+        let duration = match end.checked_sub(start) {
+            Some(d) => d,
+            None => {
+                // 溢出情况，使用最大降采样级别
+                return DownsampleLevel::L4;
+            }
+        };
         
         // 时间范围（毫秒）
         const HOUR: i64 = 3600 * 1000;
@@ -322,6 +357,10 @@ impl MemStore {
     /// 获取时间序列的标签
     pub fn get_series_labels(&self, series_id: TimeSeriesId) -> Option<Labels> {
         self.head.get_series_labels(series_id)
+    }
+
+    pub fn remove_series_batch(&self, series_ids: &[TimeSeriesId]) -> Result<()> {
+        self.head.remove_series_batch(series_ids)
     }
 }
 
