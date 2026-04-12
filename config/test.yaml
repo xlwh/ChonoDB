@@ -1,0 +1,54 @@
+listen_address: "0.0.0.0"
+port: 9091
+data_dir: "./test_data"
+
+storage:
+  mode: "standalone"
+  backend: "local"
+  local_path: "./test_data"
+  max_disk_usage: "80%"
+
+query:
+  max_concurrent: 100
+  timeout: 120
+  max_samples: 50000000
+  enable_vectorized: true
+  enable_parallel: true
+  enable_auto_downsampling: false
+  downsample_policy: "auto"
+  query_cache_size: "256MB"
+  enable_query_cache: false
+  query_cache_ttl: 300
+
+rules:
+  rule_files: []
+  evaluation_interval: 60
+  alert_send_interval: 60
+
+targets:
+  config_file: null
+  scrape_interval: 60
+  scrape_timeout: 10
+
+memory:
+  memstore_size: "512MB"
+  wal_size: "128MB"
+  query_cache_size: "256MB"
+  max_memory_usage: "80%"
+
+compression:
+  time_column:
+    algorithm: "zstd"
+    level: 3
+  value_column:
+    algorithm: "zstd"
+    level: 3
+    use_prediction: false
+  label_column:
+    algorithm: "dictionary"
+    level: 3
+
+log:
+  level: "info"
+  format: "text"
+  output: ""

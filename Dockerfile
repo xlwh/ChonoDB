@@ -1,14 +1,14 @@
 # ChronoDB Dockerfile
 # 构建阶段
-FROM rust:1.75-slim AS builder
+FROM rust:1.85-slim AS builder
 
 WORKDIR /app
 
 # 安装构建依赖
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    cmake \
+RUN apt-get update && apt-get install -y 
+    pkg-config 
+    libssl-dev 
+    cmake 
     && rm -rf /var/lib/apt/lists/*
 
 # 复制 Cargo 文件
@@ -32,6 +32,9 @@ COPY storage/src storage/src/
 COPY server/src server/src/
 COPY chronodb-cli/src chronodb-cli/src/
 COPY perf-test/src perf-test/src/
+COPY integration_tests integration_tests/
+COPY test_scripts test_scripts/
+COPY config/test.yaml config/test.yaml
 
 # 构建
 RUN cargo build --release
@@ -63,10 +66,6 @@ COPY config/chronodb.yaml /etc/chronodb/
 # 复制监控配置
 COPY config/prometheus.yml /etc/chronodb/
 COPY config/alertmanager.yml /etc/chronodb/
-
-# 复制规则和目标配置
-COPY config/rules/ /etc/chronodb/rules/
-COPY config/targets/ /etc/chronodb/targets/
 
 # 设置权限
 RUN chmod +x /usr/local/bin/chronodb-server /usr/local/bin/chronodb && \
