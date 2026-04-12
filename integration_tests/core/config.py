@@ -17,7 +17,7 @@ class ContainerConfig:
     chronodb_image: str = "chronodb:latest"
     network_name: str = "chronodb-integration-test"
     prometheus_port: int = 9090
-    chronodb_port: int = 9091
+    chronodb_port: int = 9093
     
     # 数据规模配置
     small_scale: Dict[str, Any] = field(default_factory=lambda: {

@@ -1,5 +1,5 @@
 listen_address: "0.0.0.0"
-port: 9091
+port: 9093
 data_dir: "./test_data"
 
 storage:
@@ -14,10 +14,10 @@ query:
   max_samples: 50000000
   enable_vectorized: true
   enable_parallel: true
-  enable_auto_downsampling: false
+  enable_auto_downsampling: true
   downsample_policy: "auto"
-  query_cache_size: "256MB"
-  enable_query_cache: false
+  query_cache_size: "512MB"
+  enable_query_cache: true
   query_cache_ttl: 300
 
 rules:
@@ -31,22 +31,22 @@ targets:
   scrape_timeout: 10
 
 memory:
-  memstore_size: "512MB"
-  wal_size: "128MB"
-  query_cache_size: "256MB"
-  max_memory_usage: "80%"
+  memstore_size: "2GB"
+  wal_size: "256MB"
+  query_cache_size: "512MB"
+  max_memory_usage: "85%"
 
 compression:
   time_column:
     algorithm: "zstd"
-    level: 3
+    level: 1
   value_column:
     algorithm: "zstd"
-    level: 3
+    level: 1
     use_prediction: false
   label_column:
     algorithm: "dictionary"
-    level: 3
+    level: 1
 
 log:
   level: "info"
