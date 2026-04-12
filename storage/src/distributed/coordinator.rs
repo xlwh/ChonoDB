@@ -203,13 +203,67 @@ impl QueryRouter {
         }
     }
 
-    /// 路由查询到目标节点（兼容旧接口）
-    pub fn route(&self, plan: &QueryPlan, nodes: &[String]) -> Result<HashMap<String, QueryPlan>> {
-        let mut routes = HashMap::new();
-        for node in nodes {
-            routes.insert(node.clone(), plan.clone());
+    /// 路由查询到目标节点（智能路由）
+    pub async fn route(&self, plan: &QueryPlan, nodes: &[String]) -> Result<HashMap<String, QueryPlan>> {
+        let matchers = Self::extract_matchers(plan);
+        
+        if matchers.is_empty() {
+            debug!("No matchers in query plan, routing to all {} nodes", nodes.len());
+            let mut routes = HashMap::new();
+            for node in nodes {
+                routes.insert(node.clone(), plan.clone());
+            }
+            return Ok(routes);
         }
+
+        let shard_manager = self.shard_manager.read().await;
+        
+        debug!("Routing query with matchers: {:?}", matchers);
+        
+        let distribution = shard_manager.get_shard_distribution().await?;
+        
+        let mut shard_to_primary: HashMap<u64, String> = HashMap::new();
+        for (shard_id, node_list) in &distribution {
+            if let Some(primary) = node_list.first() {
+                if !primary.is_empty() {
+                    shard_to_primary.insert(*shard_id, primary.clone());
+                }
+            }
+        }
+
+        let mut target_nodes: HashSet<String> = HashSet::new();
+        
+        for (name, value) in &matchers {
+            let hash_key = format!("{}={}", name, value);
+            let hash_value = Self::hash(&hash_key.as_bytes());
+            let estimated_shard = shard_manager.get_shard_for_series(hash_value);
+            
+            if let Some(node) = shard_to_primary.get(&estimated_shard) {
+                target_nodes.insert(node.clone());
+            }
+        }
+
+        if target_nodes.is_empty() {
+            debug!("Unable to determine target shards, routing to all {} nodes", nodes.len());
+            target_nodes.extend(nodes.iter().cloned());
+        }
+
+        let mut routes = HashMap::new();
+        for node in target_nodes {
+            routes.insert(node, plan.clone());
+        }
+
+        debug!("Intelligently routed query to {} nodes (out of {})", routes.len(), nodes.len());
+        
         Ok(routes)
+    }
+
+    fn hash(data: &[u8]) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+        let mut hasher = DefaultHasher::new();
+        hasher.write(data);
+        hasher.finish()
     }
 }
 

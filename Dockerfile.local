@@ -1,0 +1,37 @@
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    curl \
+    && rm -rf /var/lib/apt/lists/* || true
+
+RUN groupadd -r chronodb && useradd -r -g chronodb chronodb && \
+    mkdir -p /var/lib/chronodb /var/log/chronodb /etc/chronodb /etc/chronodb/rules /etc/chronodb/targets && \
+    chown -R chronodb:chronodb /var/lib/chronodb /var/log/chronodb
+
+COPY target/release/chronodb-server /usr/local/bin/chronodb-server
+COPY target/release/chronodb /usr/local/bin/chronodb
+
+COPY config/chronodb.yaml /etc/chronodb/
+COPY config/prometheus.yml /etc/chronodb/
+COPY config/alertmanager.yml /etc/chronodb/
+COPY config/rules/ /etc/chronodb/rules/
+COPY config/targets/ /etc/chronodb/targets/
+
+RUN chmod +x /usr/local/bin/chronodb-server /usr/local/bin/chronodb && \
+    chown -R chronodb:chronodb /etc/chronodb
+
+USER chronodb
+
+EXPOSE 9090 9091
+
+VOLUME ["/var/lib/chronodb", "/var/log/chronodb"]
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:9090/-/healthy || exit 1
+
+ENTRYPOINT ["chronodb-server"]
+CMD ["--config.file=/etc/chronodb/chronodb.yaml"]

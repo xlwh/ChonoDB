@@ -180,37 +180,55 @@ fn parse_text_line(line: &str) -> Option<(Vec<Label>, Vec<Sample>)> {
     }
 
     let (metric_part, rest_str) = if let Some(brace_end) = line.rfind('}') {
-        if let Some(space_pos) = line[brace_end..].find(' ') {
-            let space_pos = brace_end + space_pos;
-            (&line[..space_pos], line[space_pos..].trim())
+        let remainder = &line[brace_end + 1..];
+        if let Some(space_pos) = remainder.find(|c: char| c.is_whitespace()) {
+            let space_pos = brace_end + 1 + space_pos;
+            (&line[..=brace_end], line[space_pos..].trim())
+        } else if remainder.is_empty() {
+            debug!("No value found after closing brace, skipping: {}", line);
+            return None;
         } else {
-            (line, "")
+            debug!("No whitespace separator after closing brace, skipping: {}", line);
+            return None;
         }
-    } else if let Some(space_pos) = line.find(' ') {
+    } else if let Some(space_pos) = line.find(|c: char| c.is_whitespace()) {
         (&line[..space_pos], line[space_pos..].trim())
     } else {
         debug!("No space found in line, skipping: {}", line);
         return None;
     };
 
-    let (value_part, timestamp_part_str) = if let Some(space_pos) = rest_str.find(' ') {
-        let (v, t) = rest_str.split_at(space_pos);
-        (v, t.trim())
-    } else if rest_str.is_empty() {
+    if rest_str.is_empty() {
+        debug!("No value found in line, skipping: {}", line);
         return None;
+    }
+
+    let (value_part, timestamp_part_str) = if let Some(space_pos) = rest_str.find(|c: char| c.is_whitespace()) {
+        let (v, t) = rest_str.split_at(space_pos);
+        (v.trim(), t.trim())
     } else {
         (rest_str, "")
     };
 
     let label_pairs = if let Some(brace_pos) = metric_part.find('{') {
         let name = &metric_part[..brace_pos];
-        let labels_str = if let Some(close_brace_pos) = metric_part.rfind('}') {
+        if name.trim().is_empty() {
+            debug!("Metric name is empty, skipping: {}", line);
+            return None;
+        }
+
+        let labels_str = if let Some(close_brace_pos) = metric_part.find('}') {
+            if close_brace_pos <= brace_pos {
+                debug!("Invalid label syntax: closing brace before opening brace, skipping: {}", line);
+                return None;
+            }
             &metric_part[brace_pos + 1..close_brace_pos]
         } else {
-            &metric_part[brace_pos + 1..]
+            debug!("Missing closing brace, skipping: {}", line);
+            return None;
         };
 
-        let mut label_pairs = vec![("__name__".to_string(), name.to_string())];
+        let mut label_pairs = vec![("__name__".to_string(), name.trim().to_string())];
 
         for label in labels_str.split(',') {
             let label = label.trim();
@@ -218,12 +236,34 @@ fn parse_text_line(line: &str) -> Option<(Vec<Label>, Vec<Sample>)> {
                 continue;
             }
             if let Some(equal_pos) = label.find('=') {
-                let label_name = label[..equal_pos].trim().to_string();
-                let label_value = label[equal_pos + 1..]
-                    .trim()
-                    .trim_matches('"')
-                    .to_string();
-                label_pairs.push((label_name, label_value));
+                let label_name = label[..equal_pos].trim();
+                if label_name.is_empty() {
+                    debug!("Empty label name, skipping: {}", line);
+                    return None;
+                }
+                
+                let raw_value = label[equal_pos + 1..].trim();
+                if raw_value.len() < 2 {
+                    debug!("Invalid label value format, skipping: {}", line);
+                    return None;
+                }
+                
+                let first_char = raw_value.chars().next().unwrap();
+                let last_char = raw_value.chars().last().unwrap();
+                
+                let label_value = if first_char == '"' && last_char == '"' {
+                    raw_value[1..raw_value.len()-1].to_string()
+                } else if first_char == '\'' && last_char == '\'' {
+                    raw_value[1..raw_value.len()-1].to_string()
+                } else {
+                    debug!("Label value must be quoted, skipping: {}", line);
+                    return None;
+                };
+                
+                label_pairs.push((label_name.to_string(), label_value));
+            } else {
+                debug!("Invalid label format (missing '='), skipping: {}", line);
+                return None;
             }
         }
 
@@ -232,14 +272,27 @@ fn parse_text_line(line: &str) -> Option<(Vec<Label>, Vec<Sample>)> {
         vec![("__name__".to_string(), metric_part.to_string())]
     };
 
-    let sample_value = value_part.parse::<f64>().ok()?;
+    let sample_value = match value_part.parse::<f64>() {
+        Ok(v) => v,
+        Err(e) => {
+            debug!("Invalid float value '{}': {}, skipping: {}", value_part, e, line);
+            return None;
+        }
+    };
+
     let timestamp = if timestamp_part_str.is_empty() {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as i64
     } else {
-        timestamp_part_str.parse::<i64>().unwrap_or(0)
+        match timestamp_part_str.parse::<i64>() {
+            Ok(ts) => ts,
+            Err(e) => {
+                debug!("Invalid timestamp '{}': {}, skipping: {}", timestamp_part_str, e, line);
+                return None;
+            }
+        }
     };
 
     let mut labels: Vec<Label> = label_pairs
@@ -474,5 +527,89 @@ mod tests {
         assert!(is_likely_text(b"cpu_usage{job=\"test\"} 42.5 1700000000000\n"));
         assert!(is_likely_text(b"hello world\n"));
         assert!(!is_likely_text(&[0xff, 0xfe, 0x00, 0x01, 0x02, 0x03]));
+    }
+
+    #[test]
+    fn test_parse_text_line_invalid_no_value() {
+        let line = r#"cpu_usage{job="test"}"#;
+        assert!(parse_text_line(line).is_none());
+    }
+
+    #[test]
+    fn test_parse_text_line_invalid_no_space_after_brace() {
+        let line = r#"cpu_usage{job="test"}42.5"#;
+        assert!(parse_text_line(line).is_none());
+    }
+
+    #[test]
+    fn test_parse_text_line_invalid_empty_metric_name() {
+        let line = r#"{job="test"} 42.5"#;
+        assert!(parse_text_line(line).is_none());
+    }
+
+    #[test]
+    fn test_parse_text_line_invalid_missing_closing_brace() {
+        let line = r#"cpu_usage{job="test" 42.5"#;
+        assert!(parse_text_line(line).is_none());
+    }
+
+    #[test]
+    fn test_parse_text_line_invalid_missing_equals() {
+        let line = r#"cpu_usage{job "test"} 42.5"#;
+        assert!(parse_text_line(line).is_none());
+    }
+
+    #[test]
+    fn test_parse_text_line_invalid_unquoted_value() {
+        let line = r#"cpu_usage{job=test} 42.5"#;
+        assert!(parse_text_line(line).is_none());
+    }
+
+    #[test]
+    fn test_parse_text_line_invalid_empty_label_name() {
+        let line = r#"cpu_usage{="test"} 42.5"#;
+        assert!(parse_text_line(line).is_none());
+    }
+
+    #[test]
+    fn test_parse_text_line_single_quotes() {
+        let line = r#"cpu_usage{job='test'} 42.5"#;
+        let result = parse_text_line(line).unwrap();
+        let (labels, _) = result;
+        assert!(labels.iter().any(|l| l.name == "job" && l.value == "test"));
+    }
+
+    #[test]
+    fn test_parse_text_line_trailing_spaces() {
+        let line = r#"  cpu_usage{job="test"}  42.5  1700000000000  "#;
+        let result = parse_text_line(line).unwrap();
+        let (labels, samples) = result;
+        assert!(labels.iter().any(|l| l.name == "__name__" && l.value == "cpu_usage"));
+        assert_eq!(samples[0].value, 42.5);
+    }
+
+    #[test]
+    fn test_parse_text_line_tab_separator() {
+        let line = "cpu_usage{job=\"test\"}\t42.5\t1700000000000";
+        let result = parse_text_line(line).unwrap();
+        let (labels, samples) = result;
+        assert!(labels.iter().any(|l| l.name == "job" && l.value == "test"));
+        assert_eq!(samples[0].value, 42.5);
+    }
+
+    #[test]
+    fn test_parse_text_line_large_value() {
+        let line = r#"test_metric{job="job_0", instance="instance_0", region="region_0"} 14.205538663556716 1775473340963"#;
+        let result = parse_text_line(line).unwrap();
+        let (labels, samples) = result;
+        
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].timestamp, 1775473340963);
+        assert!((samples[0].value - 14.205538663556716).abs() < f64::EPSILON);
+        
+        assert!(labels.iter().any(|l| l.name == "__name__" && l.value == "test_metric"));
+        assert!(labels.iter().any(|l| l.name == "job" && l.value == "job_0"));
+        assert!(labels.iter().any(|l| l.name == "instance" && l.value == "instance_0"));
+        assert!(labels.iter().any(|l| l.name == "region" && l.value == "region_0"));
     }
 }

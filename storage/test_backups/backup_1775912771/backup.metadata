@@ -1,0 +1,18 @@
+{
+  "backup_id": "backup_1775912771",
+  "backup_type": "full",
+  "timestamp": "2026-04-11T13:06:11.830634884Z",
+  "source_dir": "/tmp/.tmpRuAa2v",
+  "storage_backend": "local",
+  "files_count": 1,
+  "total_size": 769,
+  "previous_backup_id": null,
+  "verification_status": {
+    "verified_at": "2026-04-11T13:06:11.830834259Z",
+    "success": false,
+    "errors": [
+      "Missing directory: blocks",
+      "Missing directory: index"
+    ]
+  }
+}

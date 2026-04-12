@@ -57,8 +57,19 @@ pub struct NodeInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeStatus {
     Online,
-    Offline,
     Degraded,
+    Offline,
+    Suspect,
+}
+
+impl NodeStatus {
+    pub fn is_available(&self) -> bool {
+        matches!(self, NodeStatus::Online | NodeStatus::Degraded)
+    }
+    
+    pub fn is_healthy(&self) -> bool {
+        matches!(self, NodeStatus::Online)
+    }
 }
 
 pub struct ClusterManager {
@@ -164,6 +175,11 @@ impl ClusterManager {
         let handle = tokio::spawn(async move {
             let mut interval = interval(Duration::from_millis(config.heartbeat_interval_ms));
 
+            // 用于跟踪连续超时次数
+            let mut timeout_counts: HashMap<String, u32> = HashMap::new();
+            // 降级超时阈值（毫秒）
+            let degraded_timeout_ms = config.node_timeout_ms / 2;
+
             loop {
                 interval.tick().await;
 
@@ -171,16 +187,77 @@ impl ClusterManager {
                 let mut nodes_write = nodes.write().await;
 
                 let mut failed_nodes: Vec<String> = Vec::new();
+                let mut degraded_nodes: Vec<String> = Vec::new();
+                let mut recovered_nodes: Vec<String> = Vec::new();
                 let mut leader_timed_out = false;
 
-                for (node_id, node) in &*nodes_write {
-                    if now - node.last_heartbeat > config.node_timeout_ms as i64 {
-                        warn!("Node {} timed out", node_id);
-                        failed_nodes.push(node_id.clone());
+                for (node_id, node) in &mut *nodes_write {
+                    let time_since_heartbeat = now - node.last_heartbeat;
+                    
+                    // 获取当前超时次数，默认为0
+                    let timeout_count = timeout_counts.entry(node_id.clone()).or_insert(0);
 
-                        if node.is_leader {
-                            info!("Leader node {} timed out", node_id);
-                            leader_timed_out = true;
+                    match node.status {
+                        NodeStatus::Online => {
+                            if time_since_heartbeat > config.node_timeout_ms as i64 {
+                                warn!("Node {} timed out ({}ms)", node_id, time_since_heartbeat);
+                                *timeout_count += 1;
+                                
+                                // 连续超时3次才标记为离线
+                                if *timeout_count >= 3 {
+                                    failed_nodes.push(node_id.clone());
+                                    node.status = NodeStatus::Offline;
+                                    
+                                    if node.is_leader {
+                                        info!("Leader node {} timed out after {} attempts", node_id, timeout_count);
+                                        leader_timed_out = true;
+                                    }
+                                } else {
+                                    // 首次超时标记为可疑状态
+                                    node.status = NodeStatus::Suspect;
+                                    warn!("Node {} marked as suspect (attempt {})", node_id, timeout_count);
+                                }
+                            } else if time_since_heartbeat > degraded_timeout_ms as i64 {
+                                // 延迟较高但未超时，标记为降级状态
+                                node.status = NodeStatus::Degraded;
+                                degraded_nodes.push(node_id.clone());
+                                debug!("Node {} marked as degraded (latency: {}ms)", node_id, time_since_heartbeat);
+                            }
+                        }
+                        NodeStatus::Degraded => {
+                            if time_since_heartbeat > config.node_timeout_ms as i64 {
+                                *timeout_count += 1;
+                                if *timeout_count >= 3 {
+                                    failed_nodes.push(node_id.clone());
+                                    node.status = NodeStatus::Offline;
+                                } else {
+                                    node.status = NodeStatus::Suspect;
+                                }
+                            } else if time_since_heartbeat <= degraded_timeout_ms as i64 {
+                                // 恢复正常
+                                node.status = NodeStatus::Online;
+                                *timeout_count = 0;
+                                recovered_nodes.push(node_id.clone());
+                                info!("Node {} recovered from degraded state", node_id);
+                            }
+                        }
+                        NodeStatus::Suspect => {
+                            if time_since_heartbeat > config.node_timeout_ms as i64 {
+                                *timeout_count += 1;
+                                if *timeout_count >= 3 {
+                                    failed_nodes.push(node_id.clone());
+                                    node.status = NodeStatus::Offline;
+                                }
+                            } else {
+                                // 恢复正常
+                                node.status = NodeStatus::Online;
+                                *timeout_count = 0;
+                                recovered_nodes.push(node_id.clone());
+                                info!("Node {} recovered from suspect state", node_id);
+                            }
+                        }
+                        NodeStatus::Offline => {
+                            // 离线节点保持离线状态
                         }
                     }
                 }
@@ -189,40 +266,70 @@ impl ClusterManager {
                     *leader_id.write().await = None;
                 }
 
-                for failed_node_id in &failed_nodes {
-                    if let Some(node) = nodes_write.get_mut(failed_node_id) {
-                        node.status = NodeStatus::Offline;
-                    }
-                }
-
-                let healthy_nodes: Vec<String> = nodes_write
+                // 获取所有可用节点（Online + Degraded）
+                let available_nodes: Vec<String> = nodes_write
                     .values()
-                    .filter(|n| n.status == NodeStatus::Online)
+                    .filter(|n| n.status.is_available())
                     .map(|n| n.node_id.clone())
                     .collect();
 
+                // 获取健康节点（仅 Online）
+                let healthy_nodes: Vec<String> = nodes_write
+                    .values()
+                    .filter(|n| n.status.is_healthy())
+                    .map(|n| n.node_id.clone())
+                    .collect();
+
+                // 处理降级节点（不触发故障转移，但记录日志）
+                for degraded_node in &degraded_nodes {
+                    warn!("Node {} is in degraded state, consider investigating", degraded_node);
+                }
+
+                // 处理故障节点
                 for failed_node_id in &failed_nodes {
                     info!("Processing failover for node: {}", failed_node_id);
 
                     if let Some(ref sm) = shard_manager {
-                        match sm.handle_node_failure(failed_node_id, &healthy_nodes).await {
+                        match sm.handle_node_failure(failed_node_id, &available_nodes).await {
                             Ok(()) => info!("Shard manager handled failure of node {}", failed_node_id),
                             Err(e) => warn!("Shard manager failed to handle node {}: {}", failed_node_id, e),
                         }
                     }
 
                     if let Some(ref rm) = replication_manager {
-                        match rm.handle_node_failure(failed_node_id, &healthy_nodes).await {
+                        match rm.handle_node_failure(failed_node_id, &available_nodes).await {
                             Ok(()) => info!("Replication manager handled failure of node {}", failed_node_id),
                             Err(e) => warn!("Replication manager failed to handle node {}: {}", failed_node_id, e),
                         }
                     }
                 }
 
+                // 处理恢复节点（重新加入集群）
+                for recovered_node in &recovered_nodes {
+                    info!("Node {} recovered, re-adding to cluster", recovered_node);
+                    if let Some(ref sm) = shard_manager {
+                        if let Err(e) = sm.rebalance_shards(&available_nodes).await {
+                            warn!("Failed to rebalance shards after node recovery: {}", e);
+                        }
+                    }
+                }
+
+                // 重新选举 leader（如果 leader 超时且有健康节点）
                 if leader_timed_out && !healthy_nodes.is_empty() {
                     info!("Re-electing leader from {} healthy nodes", healthy_nodes.len());
                 }
 
+                // 从超时计数中移除恢复的节点
+                for recovered_node in &recovered_nodes {
+                    timeout_counts.remove(recovered_node);
+                }
+
+                // 从超时计数中移除故障节点（稍后会从nodes中移除）
+                for failed_node_id in &failed_nodes {
+                    timeout_counts.remove(failed_node_id);
+                }
+
+                // 移除故障节点
                 for failed_node_id in failed_nodes {
                     nodes_write.remove(&failed_node_id);
                     info!("Removed failed node: {}", failed_node_id);
@@ -307,37 +414,54 @@ impl ClusterManager {
 
     async fn elect_leader(&self) -> Result<()> {
         let leader_node_id: Option<String>;
+        let mut leader_shard_count: u64 = 0;
         
         {
             let nodes = self.nodes.read().await;
             let healthy_nodes: Vec<&NodeInfo> = nodes
                 .values()
-                .filter(|n| n.status == NodeStatus::Online)
+                .filter(|n| n.status.is_healthy())
                 .collect();
 
             if healthy_nodes.is_empty() {
+                info!("No healthy nodes available for leader election");
                 return Ok(());
             }
 
+            // 改进的 leader 选举算法：
+            // 1. 优先选择已有 leader 标记的节点（如果仍然健康）
+            // 2. 选择分片数量最少的节点（负载均衡）
+            // 3. 考虑节点版本（新版本优先）
+            // 4. 最后按节点ID排序（确定性）
             let mut candidates = healthy_nodes.clone();
 
             candidates.sort_by(|a, b| {
+                // 1. 当前 leader 优先
                 if a.is_leader && !b.is_leader {
                     return std::cmp::Ordering::Less;
                 } else if !a.is_leader && b.is_leader {
                     return std::cmp::Ordering::Greater;
                 }
 
+                // 2. 分片数量最少优先（负载均衡）
                 if a.shard_count < b.shard_count {
                     return std::cmp::Ordering::Less;
                 } else if a.shard_count > b.shard_count {
                     return std::cmp::Ordering::Greater;
                 }
 
+                // 3. 版本号较新优先
+                let version_cmp = compare_versions(&a.version, &b.version);
+                if version_cmp != std::cmp::Ordering::Equal {
+                    return version_cmp.reverse(); // 新版本优先
+                }
+
+                // 4. 节点ID排序（确定性）
                 a.node_id.cmp(&b.node_id)
             });
 
             leader_node_id = Some(candidates[0].node_id.clone());
+            leader_shard_count = candidates[0].shard_count;
         }
 
         if let Some(leader) = leader_node_id {
@@ -348,12 +472,61 @@ impl ClusterManager {
                 node.is_leader = *nid == leader;
             }
 
-            info!("Elected new leader: {}, shard count: {}", leader, 100);
+            info!("Elected new leader: {}, shard count: {}", leader, leader_shard_count);
         }
 
         Ok(())
     }
 
+    /// 触发主从切换
+    pub async fn trigger_failover_switch(&self, failed_node_id: &str) -> Result<()> {
+        info!("Triggering failover switch for failed node: {}", failed_node_id);
+
+        let current_leader = self.get_leader().await?;
+        
+        if current_leader.as_ref().map(|l| l.node_id == failed_node_id).unwrap_or(false) {
+            info!("Leader node {} failed, initiating leader re-election", failed_node_id);
+            
+            *self.leader_id.write().await = None;
+            
+            self.elect_leader().await?;
+            
+            if let Some(new_leader) = self.get_leader().await? {
+                info!("Successfully elected new leader: {}", new_leader.node_id);
+                
+                if let Some(ref rpc_manager) = self.rpc_manager {
+                    let clients = rpc_manager.get_all_clients().await;
+                    for (node_id, _client) in clients {
+                        if node_id != new_leader.node_id {
+                            debug!("Will notify node {} of new leader {}", node_id, new_leader.node_id);
+                        }
+                    }
+                }
+            } else {
+                warn!("Failed to elect new leader after failover");
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// 比较版本号
+fn compare_versions(v1: &str, v2: &str) -> std::cmp::Ordering {
+    let parts1: Vec<u32> = v1.split('.').filter_map(|s| s.parse().ok()).collect();
+    let parts2: Vec<u32> = v2.split('.').filter_map(|s| s.parse().ok()).collect();
+    
+    for (a, b) in parts1.iter().zip(parts2.iter()) {
+        match a.cmp(b) {
+            std::cmp::Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    
+    parts1.len().cmp(&parts2.len())
+}
+
+impl ClusterManager {
     pub async fn handle_node_failure(&self, node_id: &str) -> Result<()> {
         info!("Handling node failure: {}", node_id);
 
@@ -369,7 +542,7 @@ impl ClusterManager {
 
             healthy_nodes = nodes_write
                 .values()
-                .filter(|n| n.status == NodeStatus::Online)
+                .filter(|n| n.status.is_healthy())
                 .map(|n| n.node_id.clone())
                 .collect();
 

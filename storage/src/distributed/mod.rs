@@ -642,6 +642,7 @@ impl super::rpc::RpcHandler for DistributedRpcHandler {
                                     NodeStatus::Online => super::rpc::NodeStatus::Online,
                                     NodeStatus::Offline => super::rpc::NodeStatus::Offline,
                                     NodeStatus::Degraded => super::rpc::NodeStatus::Suspect,
+                                    NodeStatus::Suspect => super::rpc::NodeStatus::Suspect,
                                 },
                                 last_heartbeat: n.last_heartbeat,
                             })

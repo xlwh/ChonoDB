@@ -1,0 +1,115 @@
+listen_address: "0.0.0.0"
+port: 9090
+data_dir: "/var/lib/chronodb"
+
+storage:
+  mode: distributed
+  backend: local
+  local:
+    path: "/var/lib/chronodb/data"
+    max_disk_usage: "90%"
+  max_disk_usage: "90%"
+
+query:
+  max_concurrent: 200
+  timeout: 300
+  max_samples: 50000000
+  enable_vectorized: true
+  enable_parallel: true
+  enable_auto_downsampling: true
+  downsample_policy: "auto"
+  query_cache_size: "2GB"
+  enable_query_cache: true
+  query_cache_ttl: 300
+
+downsampling:
+  enabled: true
+  levels:
+    - level: L0
+      resolution: "10s"
+      retention: "168h"
+    - level: L1
+      resolution: "1m"
+      retention: "720h"
+      functions: ["min", "max", "avg", "sum", "count", "last"]
+    - level: L2
+      resolution: "5m"
+      retention: "2160h"
+      functions: ["min", "max", "avg", "sum", "count", "last"]
+    - level: L3
+      resolution: "1h"
+      retention: "8760h"
+      functions: ["min", "max", "avg", "sum", "count", "last"]
+    - level: L4
+      resolution: "1d"
+      retention: "87600h"
+      functions: ["min", "max", "avg", "sum", "count", "last"]
+  task:
+    interval: "15m"
+    concurrency: 4
+    timeout: "1h"
+
+memory:
+  memstore_size: "2GB"
+  wal_size: "512MB"
+  query_cache_size: "1GB"
+  max_memory_usage: "90%"
+
+compression:
+  time_column:
+    algorithm: "zstd"
+    level: 3
+  value_column:
+    algorithm: "zstd"
+    level: 3
+    use_prediction: true
+  label_column:
+    algorithm: "dictionary"
+
+retention:
+  hot: "24h"
+  warm: "168h"
+  cold: "720h"
+  archive: "8760h"
+
+rules:
+  rule_files: []
+  evaluation_interval: 60
+  alert_send_interval: 60
+
+targets:
+  config_file: ""
+  scrape_interval: 60
+  scrape_timeout: 10
+
+remote_write:
+  enabled: true
+  listen_address: "0.0.0.0:9091"
+  max_concurrent: 200
+  batch_size: 2000
+  timeout: 60
+
+distributed:
+  node_id: "node-1"
+  metastore_endpoints:
+    - "etcd:2379"
+  replication_factor: 3
+  shard_count: 64
+  nodes:
+    - id: "node-1"
+      address: "172.29.0.10:8080"
+      rack: "rack-a"
+      zone: "zone-1"
+    - id: "node-2"
+      address: "172.29.0.11:8080"
+      rack: "rack-a"
+      zone: "zone-2"
+    - id: "node-3"
+      address: "172.29.0.12:8080"
+      rack: "rack-b"
+      zone: "zone-1"
+
+log:
+  level: "info"
+  format: "json"
+  output: ""
