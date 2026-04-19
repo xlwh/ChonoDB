@@ -230,6 +230,10 @@ pub struct QueryMetrics {
     pub query_duration_ms: Vec<f64>,
     pub series_scanned: u64,
     pub samples_scanned: u64,
+    pub slow_query_count: u64,
+    pub slow_query_threshold_ms: f64,
+    pub concurrent_queries: u64,
+    pub query_queue_length: u64,
 }
 
 impl QueryMetrics {
@@ -243,6 +247,10 @@ impl QueryMetrics {
         self.query_duration_ms.push(duration_ms);
         self.series_scanned += series;
         self.samples_scanned += samples;
+        
+        if duration_ms > self.slow_query_threshold_ms {
+            self.slow_query_count += 1;
+        }
     }
 
     pub fn avg_duration_ms(&self) -> f64 {
@@ -263,6 +271,14 @@ impl QueryMetrics {
             sorted.get(idx).copied().unwrap_or(0.0)
         }
     }
+
+    pub fn error_rate(&self) -> f64 {
+        if self.queries_total == 0 {
+            0.0
+        } else {
+            self.queries_failed as f64 / self.queries_total as f64
+        }
+    }
 }
 
 /// 写入性能指标
@@ -274,6 +290,8 @@ pub struct WriteMetrics {
     pub write_duration_ms: Vec<f64>,
     pub bytes_written: u64,
     pub samples_written: u64,
+    pub write_queue_length: u64,
+    pub batch_write_size_distribution: Vec<u64>,
 }
 
 impl WriteMetrics {
@@ -294,6 +312,27 @@ impl WriteMetrics {
             0.0
         } else {
             self.write_duration_ms.iter().sum::<f64>() / self.write_duration_ms.len() as f64
+        }
+    }
+
+    pub fn error_rate(&self) -> f64 {
+        if self.writes_total == 0 {
+            0.0
+        } else {
+            self.writes_failed as f64 / self.writes_total as f64
+        }
+    }
+
+    pub fn throughput_samples_per_sec(&self) -> f64 {
+        if self.write_duration_ms.is_empty() {
+            0.0
+        } else {
+            let total_seconds: f64 = self.write_duration_ms.iter().sum::<f64>() / 1000.0;
+            if total_seconds > 0.0 {
+                self.samples_written as f64 / total_seconds
+            } else {
+                0.0
+            }
         }
     }
 }

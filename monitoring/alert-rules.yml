@@ -1,0 +1,222 @@
+groups:
+  - name: chronodb_storage_alerts
+    interval: 30s
+    rules:
+      - alert: HighDiskUsage
+        expr: chronodb_disk_usage_bytes / 1024 / 1024 / 1024 > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High disk usage detected"
+          description: "ChronoDB disk usage is {{ $value }}GB, which is above 100GB threshold"
+
+      - alert: CriticalDiskUsage
+        expr: chronodb_disk_usage_bytes / 1024 / 1024 / 1024 > 200
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical disk usage detected"
+          description: "ChronoDB disk usage is {{ $value }}GB, which is above 200GB threshold"
+
+      - alert: LowCompressionRatio
+        expr: chronodb_compression_ratio < 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low compression ratio detected"
+          description: "ChronoDB compression ratio is {{ $value }}, which is below 2x"
+
+      - alert: HighBlockCount
+        expr: chronodb_block_count > 10000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High block count detected"
+          description: "ChronoDB has {{ $value }} blocks, consider running compaction"
+
+  - name: chronodb_query_alerts
+    interval: 30s
+    rules:
+      - alert: HighQueryLatency
+        expr: chronodb_query_latency_ms > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High query latency detected"
+          description: "ChronoDB query latency is {{ $value }}ms, which is above 1s threshold"
+
+      - alert: CriticalQueryLatency
+        expr: chronodb_query_latency_ms > 5000
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical query latency detected"
+          description: "ChronoDB query latency is {{ $value }}ms, which is above 5s threshold"
+
+      - alert: HighQueryErrorRate
+        expr: rate(chronodb_query_requests_total{status="error"}[5m]) / rate(chronodb_query_requests_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High query error rate detected"
+          description: "ChronoDB query error rate is {{ $value | humanizePercentage }}, which is above 1%"
+
+      - alert: CriticalQueryErrorRate
+        expr: rate(chronodb_query_requests_total{status="error"}[5m]) / rate(chronodb_query_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical query error rate detected"
+          description: "ChronoDB query error rate is {{ $value | humanizePercentage }}, which is above 5%"
+
+      - alert: HighSlowQueryCount
+        expr: rate(chronodb_slow_query_count[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High slow query count detected"
+          description: "ChronoDB is experiencing {{ $value }} slow queries per second"
+
+  - name: chronodb_write_alerts
+    interval: 30s
+    rules:
+      - alert: HighWriteLatency
+        expr: chronodb_write_latency_ms > 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High write latency detected"
+          description: "ChronoDB write latency is {{ $value }}ms, which is above 500ms threshold"
+
+      - alert: CriticalWriteLatency
+        expr: chronodb_write_latency_ms > 2000
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical write latency detected"
+          description: "ChronoDB write latency is {{ $value }}ms, which is above 2s threshold"
+
+      - alert: HighWriteErrorRate
+        expr: rate(chronodb_write_requests_total{status="error"}[5m]) / rate(chronodb_write_requests_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High write error rate detected"
+          description: "ChronoDB write error rate is {{ $value | humanizePercentage }}, which is above 1%"
+
+      - alert: CriticalWriteErrorRate
+        expr: rate(chronodb_write_requests_total{status="error"}[5m]) / rate(chronodb_write_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical write error rate detected"
+          description: "ChronoDB write error rate is {{ $value | humanizePercentage }}, which is above 5%"
+
+      - alert: LowWriteThroughput
+        expr: rate(chronodb_samples_written_total[5m]) < 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low write throughput detected"
+          description: "ChronoDB write throughput is {{ $value }} samples/sec, which is below 1000 samples/sec"
+
+  - name: chronodb_system_alerts
+    interval: 30s
+    rules:
+      - alert: HighCPUUsage
+        expr: chronodb_cpu_usage_percent > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage detected"
+          description: "ChronoDB CPU usage is {{ $value }}%, which is above 80% threshold"
+
+      - alert: CriticalCPUUsage
+        expr: chronodb_cpu_usage_percent > 95
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical CPU usage detected"
+          description: "ChronoDB CPU usage is {{ $value }}%, which is above 95% threshold"
+
+      - alert: HighMemoryUsage
+        expr: chronodb_memory_usage_bytes / 1024 / 1024 / 1024 > 8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage detected"
+          description: "ChronoDB memory usage is {{ $value }}GB, which is above 8GB threshold"
+
+      - alert: CriticalMemoryUsage
+        expr: chronodb_memory_usage_bytes / 1024 / 1024 / 1024 > 16
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical memory usage detected"
+          description: "ChronoDB memory usage is {{ $value }}GB, which is above 16GB threshold"
+
+      - alert: HighFileDescriptorCount
+        expr: chronodb_open_fds > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High file descriptor count detected"
+          description: "ChronoDB has {{ $value }} open file descriptors, which is above 10000 threshold"
+
+      - alert: HighThreadCount
+        expr: chronodb_threads_total > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High thread count detected"
+          description: "ChronoDB has {{ $value }} threads, which is above 1000 threshold"
+
+  - name: chronodb_availability_alerts
+    interval: 30s
+    rules:
+      - alert: ChronoDBDown
+        expr: up{job="chronodb"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ChronoDB instance is down"
+          description: "ChronoDB instance {{ $labels.instance }} is down for more than 1 minute"
+
+      - alert: ChronoDBHighSeriesCount
+        expr: chronodb_series_total > 1000000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High series count detected"
+          description: "ChronoDB has {{ $value }} time series, which is above 1M threshold"
+
+      - alert: ChronoDBHighSampleCount
+        expr: chronodb_samples_total > 100000000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High sample count detected"
+          description: "ChronoDB has {{ $value }} samples, which is above 100M threshold"

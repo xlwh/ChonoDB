@@ -1,0 +1,430 @@
+{
+  "dashboard": {
+    "title": "ChronoDB Monitoring Dashboard",
+    "uid": "chronodb-main",
+    "tags": ["chronodb", "timeseries", "database"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "System Overview",
+        "type": "row",
+        "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+        "title": "System Overview"
+      },
+      {
+        "id": 2,
+        "title": "Total Time Series",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+        "targets": [
+          {
+            "expr": "chronodb_series_total",
+            "refId": "A",
+            "legendFormat": "Series"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "orientation": "auto"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 10000},
+                {"color": "red", "value": 100000}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Total Samples",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+        "targets": [
+          {
+            "expr": "chronodb_samples_total",
+            "refId": "A",
+            "legendFormat": "Samples"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "orientation": "auto"
+        }
+      },
+      {
+        "id": 4,
+        "title": "Storage Size",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+        "targets": [
+          {
+            "expr": "chronodb_storage_bytes / 1024 / 1024 / 1024",
+            "refId": "A",
+            "legendFormat": "Size (GB)"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "orientation": "auto",
+          "unit": "GB"
+        }
+      },
+      {
+        "id": 5,
+        "title": "Compression Ratio",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+        "targets": [
+          {
+            "expr": "chronodb_compression_ratio",
+            "refId": "A",
+            "legendFormat": "Ratio"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "orientation": "auto"
+        }
+      },
+      {
+        "id": 10,
+        "title": "Query Performance",
+        "type": "row",
+        "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+        "title": "Query Performance"
+      },
+      {
+        "id": 11,
+        "title": "Query Rate",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+        "targets": [
+          {
+            "expr": "rate(chronodb_query_requests_total[5m])",
+            "refId": "A",
+            "legendFormat": "Queries/sec"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "label": "Queries/sec"},
+          {"format": "short", "label": ""}
+        ],
+        "legend": {
+          "show": true,
+          "values": true,
+          "avg": true,
+          "max": true
+        }
+      },
+      {
+        "id": 12,
+        "title": "Query Latency",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+        "targets": [
+          {
+            "expr": "chronodb_query_latency_ms",
+            "refId": "A",
+            "legendFormat": "Latency (ms)"
+          }
+        ],
+        "yaxes": [
+          {"format": "ms", "label": "Latency"},
+          {"format": "short", "label": ""}
+        ],
+        "legend": {
+          "show": true,
+          "values": true,
+          "avg": true,
+          "max": true
+        }
+      },
+      {
+        "id": 13,
+        "title": "Query Error Rate",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+        "targets": [
+          {
+            "expr": "rate(chronodb_query_requests_total{status=\"error\"}[5m]) / rate(chronodb_query_requests_total[5m])",
+            "refId": "A",
+            "legendFormat": "Error Rate"
+          }
+        ],
+        "yaxes": [
+          {"format": "percentunit", "label": "Error Rate"},
+          {"format": "short", "label": ""}
+        ]
+      },
+      {
+        "id": 14,
+        "title": "Slow Queries",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+        "targets": [
+          {
+            "expr": "chronodb_slow_query_count",
+            "refId": "A",
+            "legendFormat": "Slow Queries"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Count"},
+          {"format": "short", "label": ""}
+        ]
+      },
+      {
+        "id": 20,
+        "title": "Write Performance",
+        "type": "row",
+        "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22},
+        "title": "Write Performance"
+      },
+      {
+        "id": 21,
+        "title": "Write Rate",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 23},
+        "targets": [
+          {
+            "expr": "rate(chronodb_write_requests_total[5m])",
+            "refId": "A",
+            "legendFormat": "Writes/sec"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "label": "Writes/sec"},
+          {"format": "short", "label": ""}
+        ],
+        "legend": {
+          "show": true,
+          "values": true,
+          "avg": true,
+          "max": true
+        }
+      },
+      {
+        "id": 22,
+        "title": "Write Latency",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 23},
+        "targets": [
+          {
+            "expr": "chronodb_write_latency_ms",
+            "refId": "A",
+            "legendFormat": "Latency (ms)"
+          }
+        ],
+        "yaxes": [
+          {"format": "ms", "label": "Latency"},
+          {"format": "short", "label": ""}
+        ],
+        "legend": {
+          "show": true,
+          "values": true,
+          "avg": true,
+          "max": true
+        }
+      },
+      {
+        "id": 23,
+        "title": "Write Throughput",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 31},
+        "targets": [
+          {
+            "expr": "rate(chronodb_samples_written_total[5m])",
+            "refId": "A",
+            "legendFormat": "Samples/sec"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Samples/sec"},
+          {"format": "short", "label": ""}
+        ]
+      },
+      {
+        "id": 24,
+        "title": "Write Error Rate",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 31},
+        "targets": [
+          {
+            "expr": "rate(chronodb_write_requests_total{status=\"error\"}[5m]) / rate(chronodb_write_requests_total[5m])",
+            "refId": "A",
+            "legendFormat": "Error Rate"
+          }
+        ],
+        "yaxes": [
+          {"format": "percentunit", "label": "Error Rate"},
+          {"format": "short", "label": ""}
+        ]
+      },
+      {
+        "id": 30,
+        "title": "Storage Metrics",
+        "type": "row",
+        "gridPos": {"h": 1, "w": 24, "x": 0, "y": 39},
+        "title": "Storage Metrics"
+      },
+      {
+        "id": 31,
+        "title": "Disk Usage Over Time",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+        "targets": [
+          {
+            "expr": "chronodb_disk_usage_bytes / 1024 / 1024 / 1024",
+            "refId": "A",
+            "legendFormat": "Disk Usage (GB)"
+          }
+        ],
+        "yaxes": [
+          {"format": "GB", "label": "Size"},
+          {"format": "short", "label": ""}
+        ]
+      },
+      {
+        "id": 32,
+        "title": "Block Count",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+        "targets": [
+          {
+            "expr": "chronodb_block_count",
+            "refId": "A",
+            "legendFormat": "Blocks"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Count"},
+          {"format": "short", "label": ""}
+        ]
+      },
+      {
+        "id": 33,
+        "title": "WAL Size",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 48},
+        "targets": [
+          {
+            "expr": "chronodb_wal_size_bytes / 1024 / 1024",
+            "refId": "A",
+            "legendFormat": "WAL Size (MB)"
+          }
+        ],
+        "yaxes": [
+          {"format": "MB", "label": "Size"},
+          {"format": "short", "label": ""}
+        ]
+      },
+      {
+        "id": 34,
+        "title": "Index Size",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 48},
+        "targets": [
+          {
+            "expr": "chronodb_index_size_bytes / 1024 / 1024",
+            "refId": "A",
+            "legendFormat": "Index Size (MB)"
+          }
+        ],
+        "yaxes": [
+          {"format": "MB", "label": "Size"},
+          {"format": "short", "label": ""}
+        ]
+      },
+      {
+        "id": 40,
+        "title": "System Resources",
+        "type": "row",
+        "gridPos": {"h": 1, "w": 24, "x": 0, "y": 56},
+        "title": "System Resources"
+      },
+      {
+        "id": 41,
+        "title": "CPU Usage",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 57},
+        "targets": [
+          {
+            "expr": "chronodb_cpu_usage_percent",
+            "refId": "A",
+            "legendFormat": "CPU %"
+          }
+        ],
+        "yaxes": [
+          {"format": "percent", "label": "CPU %", "max": 100, "min": 0},
+          {"format": "short", "label": ""}
+        ]
+      },
+      {
+        "id": 42,
+        "title": "Memory Usage",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 57},
+        "targets": [
+          {
+            "expr": "chronodb_memory_usage_bytes / 1024 / 1024",
+            "refId": "A",
+            "legendFormat": "Memory (MB)"
+          }
+        ],
+        "yaxes": [
+          {"format": "MB", "label": "Memory"},
+          {"format": "short", "label": ""}
+        ]
+      },
+      {
+        "id": 43,
+        "title": "Open File Descriptors",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 65},
+        "targets": [
+          {
+            "expr": "chronodb_open_fds",
+            "refId": "A",
+            "legendFormat": "FDs"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Count"},
+          {"format": "short", "label": ""}
+        ]
+      },
+      {
+        "id": 44,
+        "title": "Thread Count",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 65},
+        "targets": [
+          {
+            "expr": "chronodb_threads_total",
+            "refId": "A",
+            "legendFormat": "Threads"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Count"},
+          {"format": "short", "label": ""}
+        ]
+      }
+    ]
+  }
+}

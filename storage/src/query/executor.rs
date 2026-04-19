@@ -146,6 +146,10 @@ impl QueryExecutor {
             Function::PresentOverTime => self.execute_present_over_time(plan, ctx).await,
             Function::HistogramQuantile => self.execute_histogram_quantile(plan, ctx).await,
             
+            // Scalar functions
+            Function::Scalar => self.execute_scalar(plan, ctx).await,
+            Function::Vector => self.execute_vector(plan, ctx).await,
+            
             _ => Err(Error::InvalidData(format!("Function {} not implemented", plan.func.name()))),
         }
     }
@@ -1361,6 +1365,54 @@ impl QueryExecutor {
         }
 
         Ok(result)
+    }
+
+    /// Execute scalar() function - convert single-element vector to scalar
+    async fn execute_scalar(&self, plan: &CallPlan, ctx: &ExecutionContext) -> Result<Vec<TimeSeries>> {
+        if plan.args.len() != 1 {
+            return Err(Error::InvalidData("scalar() requires exactly one argument".to_string()));
+        }
+
+        let series = self.execute_plan(&plan.args[0].plan_type, ctx).await?;
+
+        // scalar() returns the value of the single element in the vector
+        // If the vector has more than one element, it returns NaN
+        // If the vector is empty, it returns NaN
+        let value = if series.len() == 1 && series[0].samples.len() == 1 {
+            series[0].samples[0].value
+        } else {
+            f64::NAN
+        };
+
+        // Return a scalar as a vector with an empty label set
+        let mut scalar_series = TimeSeries::new(0, vec![]);
+        scalar_series.add_sample(Sample::new(ctx.start, value));
+
+        Ok(vec![scalar_series])
+    }
+
+    /// Execute vector() function - convert scalar to vector
+    async fn execute_vector(&self, plan: &CallPlan, ctx: &ExecutionContext) -> Result<Vec<TimeSeries>> {
+        if plan.args.len() != 1 {
+            return Err(Error::InvalidData("vector() requires exactly one argument".to_string()));
+        }
+
+        let series = self.execute_plan(&plan.args[0].plan_type, ctx).await?;
+
+        // vector() converts a scalar to a vector with no labels
+        // If the input is already a vector, it returns the vector as-is
+        if series.len() == 1 && series[0].labels.is_empty() {
+            // Already a scalar-like vector, return as-is
+            Ok(series)
+        } else if series.len() == 1 && series[0].samples.len() == 1 {
+            // Single value, convert to vector with no labels
+            let mut vector_series = TimeSeries::new(0, vec![]);
+            vector_series.add_sample(Sample::new(ctx.start, series[0].samples[0].value));
+            Ok(vec![vector_series])
+        } else {
+            // Return the series as-is (it's already a vector)
+            Ok(series)
+        }
     }
 }
 
