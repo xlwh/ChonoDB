@@ -490,7 +490,21 @@ pub fn parse_promql(query: &str) -> Result<Expr> {
     // 简化实现：解析基本的指标名称和标签匹配器
     let query = query.trim();
 
-    // 检查是否是函数调用
+    // 首先检查是否是聚合表达式 (需要在普通函数调用之前检查)
+    // 支持格式: sum by (job) (expr), sum(expr) by (job), sum(expr)
+    if let Some(first_paren) = query.find('(') {
+        let before_paren = &query[..first_paren].trim();
+        // 提取可能的函数名（处理 "sum by (job)" 这种格式）
+        let possible_func_name = before_paren.split_whitespace().next().unwrap_or("");
+
+        if let Some(func) = Function::from_name(possible_func_name) {
+            if is_aggregation_function(&func) {
+                return parse_aggregation(query, func);
+            }
+        }
+    }
+
+    // 检查是否是普通函数调用（非聚合函数）
     if let Some(paren_idx) = query.find('(') {
         let func_name = &query[..paren_idx].trim();
         if let Some(func) = Function::from_name(func_name) {
@@ -524,51 +538,6 @@ pub fn parse_promql(query: &str) -> Result<Expr> {
             }
 
             return Ok(Expr::new(ExprType::Call(Call { func, args })));
-        }
-    }
-
-    // 检查是否是聚合表达式
-    if let Some(func) = Function::from_name(query.split('(').next().unwrap().trim()) {
-        if is_aggregation_function(&func) {
-            if let Some(paren_idx) = query.find('(') {
-                let mut depth = 1;
-                let mut end_idx = paren_idx + 1;
-                for (i, c) in query[paren_idx + 1..].chars().enumerate() {
-                    match c {
-                        '(' => depth += 1,
-                        ')' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                end_idx = paren_idx + 1 + i;
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                let inner = &query[paren_idx + 1..end_idx];
-                let expr = parse_promql(inner)?;
-
-                // 检查后面是否有子查询修饰符
-                let after_agg = &query[end_idx + 1..].trim();
-                if after_agg.starts_with('[') && after_agg.contains(':') {
-                    let agg_expr = Expr::new(ExprType::Aggregation(Aggregation {
-                        op: func,
-                        expr: Box::new(expr),
-                        grouping: vec![],
-                        without: false,
-                    }));
-                    return parse_subquery_suffix(agg_expr, after_agg);
-                }
-
-                return Ok(Expr::new(ExprType::Aggregation(Aggregation {
-                    op: func,
-                    expr: Box::new(expr),
-                    grouping: vec![],
-                    without: false,
-                })));
-            }
         }
     }
 
@@ -670,6 +639,145 @@ fn is_aggregation_function(func: &Function) -> bool {
         Function::TopK | Function::BottomK | Function::Quantile |
         Function::CountValues
     )
+}
+
+/// 解析聚合表达式，支持以下格式：
+/// - sum(http_requests_total)
+/// - sum by (job) (http_requests_total)
+/// - sum(http_requests_total) by (job)
+/// - sum without (instance) (http_requests_total)
+fn parse_aggregation(query: &str, op: Function) -> Result<Expr> {
+    let query = query.trim();
+
+    // 获取函数名后的部分
+    let func_name_len = op.name().len();
+    let after_func = query[func_name_len..].trim();
+
+    let mut grouping: Vec<String> = vec![];
+    let mut without = false;
+    let expr_str: &str;
+
+    // 检查是否有 by (labels) 或 without (labels) 修饰符在表达式之前
+    if after_func.to_lowercase().starts_with("by ") {
+        let (labels, rest) = parse_grouping_labels(&after_func[3..])?;
+        grouping = labels;
+        without = false;
+        expr_str = rest.trim();
+    } else if after_func.to_lowercase().starts_with("without ") {
+        let (labels, rest) = parse_grouping_labels(&after_func[8..])?;
+        grouping = labels;
+        without = true;
+        expr_str = rest.trim();
+    } else {
+        expr_str = after_func;
+    }
+    
+    // 解析表达式部分（括号内的内容）
+    if !expr_str.starts_with('(') {
+        return Err(Error::InvalidData(format!(
+            "Expected '(' after aggregation modifier, got: {}", expr_str
+        )));
+    }
+    
+    // 找到匹配的右括号
+    let mut depth = 1;
+    let mut end_idx = 1;
+    for (i, c) in expr_str[1..].chars().enumerate() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end_idx = i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    if depth != 0 {
+        return Err(Error::InvalidData("Unclosed parenthesis in aggregation".to_string()));
+    }
+    
+    let inner_expr = &expr_str[1..end_idx];
+    let expr = parse_promql(inner_expr)?;
+    
+    // 检查表达式后面是否有 by (labels) 或 without (labels) 修饰符
+    let after_expr = &expr_str[end_idx + 1..].trim();
+    let remaining = if after_expr.to_lowercase().starts_with("by ") {
+        let (labels, rest) = parse_grouping_labels(&after_expr[3..])?;
+        grouping = labels;
+        without = false;
+        rest.trim()
+    } else if after_expr.to_lowercase().starts_with("without ") {
+        let (labels, rest) = parse_grouping_labels(&after_expr[8..])?;
+        grouping = labels;
+        without = true;
+        rest.trim()
+    } else {
+        after_expr
+    };
+    
+    // 检查是否有子查询修饰符
+    if remaining.starts_with('[') && remaining.contains(':') {
+        let agg_expr = Expr::new(ExprType::Aggregation(Aggregation {
+            op,
+            expr: Box::new(expr),
+            grouping,
+            without,
+        }));
+        return parse_subquery_suffix(agg_expr, remaining);
+    }
+    
+    Ok(Expr::new(ExprType::Aggregation(Aggregation {
+        op,
+        expr: Box::new(expr),
+        grouping,
+        without,
+    })))
+}
+
+/// 解析分组标签，如 "(job, instance) (expr)" 返回 (labels, rest)
+fn parse_grouping_labels(s: &str) -> Result<(Vec<String>, &str)> {
+    let s = s.trim();
+
+    if !s.starts_with('(') {
+        return Err(Error::InvalidData(format!(
+            "Expected '(' after by/without, got: {}", s
+        )));
+    }
+
+    // 找到匹配的右括号
+    let mut depth = 1;
+    let mut end_idx = 1;
+    for (i, c) in s[1..].chars().enumerate() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end_idx = i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if depth != 0 {
+        return Err(Error::InvalidData("Unclosed parenthesis in grouping labels".to_string()));
+    }
+    
+    let labels_str = &s[1..end_idx];
+    let labels: Vec<String> = labels_str
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    
+    let rest = &s[end_idx + 1..];
+    Ok((labels, rest))
 }
 
 fn parse_vector_selector(s: &str) -> Result<VectorSelector> {
@@ -941,5 +1049,33 @@ mod tests {
         assert_eq!(Function::from_name("rate"), Some(Function::Rate));
         assert_eq!(Function::from_name("sum"), Some(Function::Sum));
         assert_eq!(Function::from_name("unknown"), None);
+    }
+
+    #[test]
+    fn test_parse_aggregation_by() {
+        // Test sum by (job) (http_requests_total)
+        let expr = parse_promql("sum by (job) (http_requests_total)").unwrap();
+        match &expr.expr_type {
+            ExprType::Aggregation(agg) => {
+                assert_eq!(agg.op.name(), "sum");
+                assert_eq!(agg.grouping, vec!["job"]);
+                assert_eq!(agg.without, false);
+            }
+            _ => panic!("Expected Aggregation, got {:?}", expr.expr_type),
+        }
+    }
+
+    #[test]
+    fn test_parse_aggregation_trailing_by() {
+        // Test sum(http_requests_total) by (job)
+        let expr = parse_promql("sum(http_requests_total) by (job)").unwrap();
+        match &expr.expr_type {
+            ExprType::Aggregation(agg) => {
+                assert_eq!(agg.op.name(), "sum");
+                assert_eq!(agg.grouping, vec!["job"]);
+                assert_eq!(agg.without, false);
+            }
+            _ => panic!("Expected Aggregation, got {:?}", expr.expr_type),
+        }
     }
 }

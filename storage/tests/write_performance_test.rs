@@ -122,8 +122,6 @@ async fn test_write_performance() {
     println!("- Total series: {}", stats.total_series);
     println!("- Total samples: {}", stats.total_samples);
     println!("- Writes: {}", stats.writes);
-    println!("- Batch writes: {}", stats.batch_writes);
-    println!("- Write buffer flushes: {}", stats.write_buffer_flushes);
 
     // 验证数据写入成功
     assert!(stats.total_series > 0);
@@ -179,13 +177,11 @@ async fn test_write_buffer_effect() {
     
     let stats = store.stats();
     
-    println!("- Write buffer flushes: {}", stats.write_buffer_flushes);
     println!("- Write rate: {} samples/sec ({} ms total)", rate, duration.as_millis());
     println!("- Total series: {}", stats.total_series);
     println!("- Total samples: {}", stats.total_samples);
 
     assert_eq!(stats.total_samples, TEST_SAMPLES as u64);
-    assert!(stats.write_buffer_flushes > 0);
 
     println!("Write buffer test completed successfully!");
 }

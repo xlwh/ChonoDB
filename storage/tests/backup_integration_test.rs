@@ -6,13 +6,13 @@ use chronodb_storage::flush::FlushManager;
 use tempfile::tempdir;
 use std::sync::Arc;
 
-fn create_test_store() -> Arc<MemStore> {
+fn create_test_store() -> (tempfile::TempDir, Arc<MemStore>) {
     let temp_dir = tempdir().unwrap();
     let config = StorageConfig {
         data_dir: temp_dir.path().to_string_lossy().to_string(),
         ..Default::default()
     };
-    Arc::new(MemStore::new(config).unwrap())
+    (temp_dir, Arc::new(MemStore::new(config).unwrap()))
 }
 
 fn write_test_data(store: &MemStore) {
@@ -40,7 +40,7 @@ fn write_test_data(store: &MemStore) {
         Sample::new(3000, 30.0),
     ];
     store.write(labels2, samples2).unwrap();
-    
+
     // 刷新缓冲区，确保数据写入 head
     store.flush().unwrap();
 }
@@ -78,6 +78,9 @@ async fn test_backup_and_restore() {
         minio_config: None,
         enable_verification: true,
         parallelism: 4,
+        enable_encryption: false,
+        encryption_key: None,
+        encryption_algorithm: "aes-256-gcm".to_string(),
     };
 
     let mut backup_manager = BackupManager::new(backup_config).await.unwrap();
@@ -95,9 +98,9 @@ async fn test_backup_and_restore() {
 
     // 验证恢复后的数据 - 检查文件是否存在
     // 注意：MemStore::new 不会自动从磁盘加载数据，所以我们检查文件系统
-    let restored_wal_path = std::path::Path::new(&restore_path).join("wal");
+    let _restored_wal_path = std::path::Path::new(&restore_path).join("wal");
     assert!(std::path::Path::new(&restore_path).exists(), "Restore directory should exist");
-    
+
     // 验证恢复的目录中有数据文件
     let entries: Vec<_> = std::fs::read_dir(&restore_path)
         .unwrap()
@@ -142,6 +145,9 @@ async fn test_incremental_backup() {
         minio_config: None,
         enable_verification: true,
         parallelism: 4,
+        enable_encryption: false,
+        encryption_key: None,
+        encryption_algorithm: "aes-256-gcm".to_string(),
     };
 
     let mut backup_manager = BackupManager::new(backup_config).await.unwrap();
@@ -193,6 +199,9 @@ async fn test_backup_verification() {
         minio_config: None,
         enable_verification: true,
         parallelism: 4,
+        enable_encryption: false,
+        encryption_key: None,
+        encryption_algorithm: "aes-256-gcm".to_string(),
     };
 
     let mut backup_manager = BackupManager::new(backup_config).await.unwrap();
@@ -230,6 +239,9 @@ async fn test_backup_retention() {
         minio_config: None,
         enable_verification: true,
         parallelism: 4,
+        enable_encryption: false,
+        encryption_key: None,
+        encryption_algorithm: "aes-256-gcm".to_string(),
     };
 
     let mut backup_manager = BackupManager::new(backup_config).await.unwrap();

@@ -38,6 +38,9 @@ pub struct ServerConfig {
 
     /// TLS 配置
     pub tls: TlsConfig,
+
+    /// 降采样配置
+    pub downsampling: DownsamplingConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,6 +247,81 @@ impl Default for TlsConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownsamplingConfig {
+    /// 是否启用降采样
+    pub enabled: bool,
+
+    /// 降采样间隔（秒）
+    pub interval: u64,
+
+    /// 并发数
+    pub concurrency: usize,
+
+    /// 超时时间（秒）
+    pub timeout: u64,
+
+    /// 降采样级别配置
+    pub levels: Vec<DownsamplingLevelConfig>,
+}
+
+impl Default for DownsamplingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval: 900, // 15分钟
+            concurrency: 4,
+            timeout: 3600, // 1小时
+            levels: vec![
+                DownsamplingLevelConfig {
+                    level: "L1".to_string(),
+                    enabled: true,
+                    functions: vec!["min", "max", "avg", "sum", "count", "last"]
+                        .into_iter()
+                        .map(String::from)
+                        .collect(),
+                },
+                DownsamplingLevelConfig {
+                    level: "L2".to_string(),
+                    enabled: true,
+                    functions: vec!["min", "max", "avg", "sum", "count", "last"]
+                        .into_iter()
+                        .map(String::from)
+                        .collect(),
+                },
+                DownsamplingLevelConfig {
+                    level: "L3".to_string(),
+                    enabled: true,
+                    functions: vec!["min", "max", "avg", "sum", "count", "last"]
+                        .into_iter()
+                        .map(String::from)
+                        .collect(),
+                },
+                DownsamplingLevelConfig {
+                    level: "L4".to_string(),
+                    enabled: true,
+                    functions: vec!["min", "max", "avg", "sum", "count", "last"]
+                        .into_iter()
+                        .map(String::from)
+                        .collect(),
+                },
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownsamplingLevelConfig {
+    /// 级别名称: L1 | L2 | L3 | L4
+    pub level: String,
+
+    /// 是否启用
+    pub enabled: bool,
+
+    /// 支持的聚合函数
+    pub functions: Vec<String>,
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -306,6 +384,7 @@ impl Default for ServerConfig {
             },
             auth: AuthConfig::default(),
             tls: TlsConfig::default(),
+            downsampling: DownsamplingConfig::default(),
         }
     }
 }

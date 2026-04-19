@@ -1,7 +1,7 @@
 use chronodb_storage::memstore::MemStore;
 use chronodb_storage::config::StorageConfig;
 use chronodb_storage::model::{Label, Sample};
-use chronodb_storage::query::{QueryEngine, cache::CacheConfig};
+use chronodb_storage::query::QueryEngine;
 use std::sync::Arc;
 use std::time::{Instant, Duration};
 use tempfile::tempdir;
@@ -62,13 +62,7 @@ async fn test_query_performance() {
     let engine_no_cache = QueryEngine::new(store.clone());
     
     // 创建查询引擎（有缓存）
-    let cache_config = CacheConfig {
-        max_size: 1000,
-        ttl: Duration::from_secs(3600),
-        enabled: true,
-        max_bytes: 1024 * 1024 * 100,
-    };
-    let engine_with_cache = QueryEngine::with_cache(store.clone(), cache_config);
+    let engine_with_cache = QueryEngine::with_cache(store.clone(), 1000);
 
     println!("\nTesting query performance...");
 
@@ -113,10 +107,9 @@ async fn test_query_performance() {
              10.0 / second_duration.as_secs_f64(), second_duration.as_millis());
     
     // 打印缓存统计
-    if let Some(stats) = engine_with_cache.cache_stats() {
-        println!("Cache stats: hits={}, misses={}, hit_rate={:.2}%", 
-                 stats.hits, stats.misses, stats.hit_rate() * 100.0);
-    }
+    let stats = engine_with_cache.cache_stats();
+    println!("Cache stats: hits={}, misses={}, hit_rate={:.2}%", 
+             stats.hits, stats.misses, stats.hit_rate() * 100.0);
 
     // 测试3: 范围查询
     println!("\n3. Testing range query...");
@@ -192,19 +185,13 @@ async fn test_query_cache_performance() {
     let store = Arc::new(MemStore::new(config).unwrap());
     create_test_data(&store, 100, 100);
 
-    let cache_config = CacheConfig {
-        max_size: 100,
-        ttl: Duration::from_secs(3600),
-        enabled: true,
-        max_bytes: 1024 * 1024 * 100,
-    };
-    let engine = QueryEngine::with_cache(store.clone(), cache_config);
+    let engine = QueryEngine::with_cache(store.clone(), 100);
 
     println!("Testing query cache performance...");
 
     // 执行相同的查询多次
     const ITERATIONS: usize = 100;
-    
+
     let start = Instant::now();
     for i in 0..ITERATIONS {
         let query = format!("test_metric{{series=\"{}\"}}", i % 10);
@@ -214,17 +201,16 @@ async fn test_query_cache_performance() {
     let duration = start.elapsed();
 
     // 打印缓存统计
-    if let Some(stats) = engine.cache_stats() {
-        println!("Cache performance:");
-        println!("- Total queries: {}", ITERATIONS);
-        println!("- Cache hits: {}", stats.hits);
-        println!("- Cache misses: {}", stats.misses);
-        println!("- Hit rate: {:.2}%", stats.hit_rate() * 100.0);
-        println!("- Average query time: {:.2} ms", duration.as_millis() as f64 / ITERATIONS as f64);
-        
-        // 验证缓存命中率
-        assert!(stats.hit_rate() > 0.5, "Cache hit rate should be > 50%");
-    }
+    let stats = engine.cache_stats();
+    println!("Cache performance:");
+    println!("- Total queries: {}", ITERATIONS);
+    println!("- Cache hits: {}", stats.hits);
+    println!("- Cache misses: {}", stats.misses);
+    println!("- Hit rate: {:.2}%", stats.hit_rate() * 100.0);
+    println!("- Average query time: {:.2} ms", duration.as_millis() as f64 / ITERATIONS as f64);
+
+    // 验证缓存命中率
+    assert!(stats.hit_rate() > 0.5, "Cache hit rate should be > 50%");
 
     println!("Query cache test completed successfully!");
 }

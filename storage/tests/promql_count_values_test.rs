@@ -7,18 +7,18 @@ use chronodb_storage::query::planner::{PlanType, VectorQueryPlan, CallPlan};
 use std::sync::Arc;
 use tempfile::tempdir;
 
-fn create_test_store() -> Arc<MemStore> {
+fn create_test_store() -> (tempfile::TempDir, Arc<MemStore>) {
     let temp_dir = tempdir().unwrap();
     let config = StorageConfig {
         data_dir: temp_dir.path().to_string_lossy().to_string(),
         ..Default::default()
     };
-    Arc::new(MemStore::new(config).unwrap())
+    (temp_dir, Arc::new(MemStore::new(config).unwrap()))
 }
 
 #[tokio::test]
 async fn test_count_values_basic() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // Create test data with different values
@@ -118,7 +118,7 @@ async fn test_count_values_basic() {
 
 #[tokio::test]
 async fn test_count_values_single_value() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // All servers have the same version
@@ -180,7 +180,7 @@ async fn test_count_values_single_value() {
 
 #[tokio::test]
 async fn test_count_values_empty_data() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // No data written
@@ -234,7 +234,7 @@ async fn test_count_values_empty_data() {
 
 #[tokio::test]
 async fn test_count_values_many_unique_values() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // Create 100 series with 10 unique values (10 series per value)

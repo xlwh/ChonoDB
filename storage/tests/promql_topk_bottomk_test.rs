@@ -7,18 +7,18 @@ use chronodb_storage::query::planner::{PlanType, VectorQueryPlan, CallPlan};
 use std::sync::Arc;
 use tempfile::tempdir;
 
-fn create_test_store() -> Arc<MemStore> {
+fn create_test_store() -> (tempfile::TempDir, Arc<MemStore>) {
     let temp_dir = tempdir().unwrap();
     let config = StorageConfig {
         data_dir: temp_dir.path().to_string_lossy().to_string(),
         ..Default::default()
     };
-    Arc::new(MemStore::new(config).unwrap())
+    (temp_dir, Arc::new(MemStore::new(config).unwrap()))
 }
 
 #[tokio::test]
 async fn test_topk_basic() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // Create test data with different values
@@ -86,7 +86,7 @@ async fn test_topk_basic() {
 
 #[tokio::test]
 async fn test_bottomk_basic() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // Create test data with different values
@@ -154,7 +154,7 @@ async fn test_bottomk_basic() {
 
 #[tokio::test]
 async fn test_topk_k_zero() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     let labels = vec![
@@ -210,7 +210,7 @@ async fn test_topk_k_zero() {
 
 #[tokio::test]
 async fn test_topk_k_greater_than_series() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // Create only 3 series
@@ -269,7 +269,7 @@ async fn test_topk_k_greater_than_series() {
 
 #[tokio::test]
 async fn test_topk_empty_data() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // No data written

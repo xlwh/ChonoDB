@@ -7,18 +7,18 @@ use chronodb_storage::query::planner::QueryPlanner;
 use std::sync::Arc;
 use tempfile::tempdir;
 
-fn create_test_store() -> Arc<MemStore> {
+fn create_test_store() -> (tempfile::TempDir, Arc<MemStore>) {
     let temp_dir = tempdir().unwrap();
     let config = StorageConfig {
         data_dir: temp_dir.path().to_string_lossy().to_string(),
         ..Default::default()
     };
-    Arc::new(MemStore::new(config).unwrap())
+    (temp_dir, Arc::new(MemStore::new(config).unwrap()))
 }
 
 #[tokio::test]
 async fn test_offset_modifier_positive() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // Create test data at different timestamps

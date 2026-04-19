@@ -7,18 +7,18 @@ use chronodb_storage::query::planner::{PlanType, VectorQueryPlan, CallPlan};
 use std::sync::Arc;
 use tempfile::tempdir;
 
-fn create_test_store() -> Arc<MemStore> {
+fn create_test_store() -> (tempfile::TempDir, Arc<MemStore>) {
     let temp_dir = tempdir().unwrap();
     let config = StorageConfig {
         data_dir: temp_dir.path().to_string_lossy().to_string(),
         ..Default::default()
     };
-    Arc::new(MemStore::new(config).unwrap())
+    (temp_dir, Arc::new(MemStore::new(config).unwrap()))
 }
 
 #[tokio::test]
 async fn test_quantile_median() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // Create test data with known values: 10, 20, 30, 40, 50
@@ -78,7 +78,7 @@ async fn test_quantile_median() {
 
 #[tokio::test]
 async fn test_quantile_95th() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // Create 100 values from 1 to 100
@@ -139,7 +139,7 @@ async fn test_quantile_95th() {
 
 #[tokio::test]
 async fn test_quantile_boundary_values() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // Create test data
@@ -233,7 +233,7 @@ async fn test_quantile_boundary_values() {
 
 #[tokio::test]
 async fn test_quantile_empty_data() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // No data written
@@ -285,7 +285,7 @@ async fn test_quantile_empty_data() {
 
 #[tokio::test]
 async fn test_quantile_single_value() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // Only one value
@@ -342,7 +342,7 @@ async fn test_quantile_single_value() {
 
 #[tokio::test]
 async fn test_quantile_interpolation() {
-    let store = create_test_store();
+    let (_temp_dir, store) = create_test_store();
     let executor = QueryExecutor::new(store.clone());
 
     // Create 4 values: 10, 20, 30, 40

@@ -27,6 +27,7 @@ async fn test_backup_config() {
         minio_config: None,
         enable_verification: false,
         parallelism: 8,
+        ..Default::default()
     };
 
     assert_eq!(custom_config.backup_dir, "/custom/backups");
@@ -56,6 +57,7 @@ async fn test_backup_manager_creation() {
         minio_config: None,
         enable_verification: true,
         parallelism: 4,
+        ..Default::default()
     };
 
     let manager = BackupManager::new(config).await;
@@ -91,6 +93,7 @@ async fn test_full_backup() {
         minio_config: None,
         enable_verification: true,
         parallelism: 4,
+        ..Default::default()
     };
 
     let mut manager = BackupManager::new(config).await.unwrap();
@@ -136,6 +139,7 @@ async fn test_backup_restore() {
         minio_config: None,
         enable_verification: true,
         parallelism: 4,
+        ..Default::default()
     };
 
     let mut manager = BackupManager::new(config).await.unwrap();
@@ -179,6 +183,7 @@ async fn test_list_backups() {
         minio_config: None,
         enable_verification: true,
         parallelism: 4,
+        ..Default::default()
     };
 
     let mut manager = BackupManager::new(config).await.unwrap();
@@ -222,6 +227,7 @@ async fn test_backup_cleanup() {
         minio_config: None,
         enable_verification: true,
         parallelism: 4,
+        ..Default::default()
     };
 
     let mut manager = BackupManager::new(config).await.unwrap();

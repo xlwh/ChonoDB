@@ -1533,23 +1533,31 @@ impl QueryExecutor {
         if samples.len() < 2 {
             return Ok(Vec::new());
         }
-        
+
         let mut result = Vec::new();
         for i in 1..samples.len() {
             let prev = &samples[i-1];
             let curr = &samples[i];
-            
+
             let time_delta = (curr.timestamp - prev.timestamp) as f64;
             if time_delta <= 0.0 {
                 continue;
             }
-            
+
             let value_delta = curr.value - prev.value;
+
+            // 处理计数器重置：如果值为负，说明计数器重置了，跳过这个样本对
+            // 或者可以认为是新计数器的值，但 rate 应该为 0
+            if value_delta < 0.0 {
+                // 计数器重置，跳过这个负值
+                continue;
+            }
+
             let rate = value_delta / time_delta;
-            
+
             result.push(Sample::new(curr.timestamp, rate));
         }
-        
+
         Ok(result)
     }
 
@@ -1775,18 +1783,19 @@ mod tests {
     use crate::model::{Label, Sample};
     use tempfile::tempdir;
 
-    fn create_test_store() -> Arc<MemStore> {
+    fn create_test_store() -> (tempfile::TempDir, Arc<MemStore>) {
         let temp_dir = tempdir().unwrap();
+        std::fs::create_dir_all(temp_dir.path()).unwrap();
         let config = StorageConfig {
             data_dir: temp_dir.path().to_string_lossy().to_string(),
             ..Default::default()
         };
-        Arc::new(MemStore::new(config).unwrap())
+        (temp_dir, Arc::new(MemStore::new(config).unwrap()))
     }
 
     #[tokio::test]
     async fn test_execute_vector_query() {
-        let store = create_test_store();
+        let (_temp_dir, store) = create_test_store();
         let executor = QueryExecutor::new(store.clone());
 
         let labels = vec![
@@ -1821,7 +1830,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_rate() {
-        let store = create_test_store();
+        let (_temp_dir, store) = create_test_store();
         let executor = QueryExecutor::new(store.clone());
 
         let labels = vec![
@@ -1852,6 +1861,8 @@ mod tests {
                 end: 4000,
                 step: 1000,
             }],
+            k: None,
+            quantile: None,
         });
 
         let plan = QueryPlan {
@@ -1868,7 +1879,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_sum() {
-        let store = create_test_store();
+        let (_temp_dir, store) = create_test_store();
         let executor = QueryExecutor::new(store.clone());
 
         let labels1 = vec![
@@ -1901,6 +1912,8 @@ mod tests {
                 end: 2000,
                 step: 1000,
             }],
+            k: None,
+            quantile: None,
         });
 
         let plan = QueryPlan {
@@ -1917,7 +1930,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_hit() {
-        let store = create_test_store();
+        let (_temp_dir, store) = create_test_store();
         let cache_config = CacheConfig::new(100, 1024 * 1024, 300);
         let executor = QueryExecutor::with_cache(store.clone(), cache_config);
 
@@ -1966,7 +1979,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_miss_different_query() {
-        let store = create_test_store();
+        let (_temp_dir, store) = create_test_store();
         let cache_config = CacheConfig::new(100, 1024 * 1024, 300);
         let executor = QueryExecutor::with_cache(store.clone(), cache_config);
 
@@ -2016,7 +2029,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_clear() {
-        let store = create_test_store();
+        let (_temp_dir, store) = create_test_store();
         let cache_config = CacheConfig::new(100, 1024 * 1024, 300);
         let executor = QueryExecutor::with_cache(store.clone(), cache_config);
 
@@ -2053,7 +2066,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_disabled() {
-        let store = create_test_store();
+        let (_temp_dir, store) = create_test_store();
         let executor = QueryExecutor::new(store.clone());
 
         let labels = vec![
@@ -2083,7 +2096,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_hit_rate() {
-        let store = create_test_store();
+        let (_temp_dir, store) = create_test_store();
         let cache_config = CacheConfig::new(100, 1024 * 1024, 300);
         let executor = QueryExecutor::with_cache(store.clone(), cache_config);
 
