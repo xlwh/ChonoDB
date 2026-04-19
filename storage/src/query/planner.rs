@@ -18,6 +18,7 @@ pub struct QueryPlan {
 pub enum PlanType {
     VectorQuery(VectorQueryPlan),
     MatrixQuery(MatrixQueryPlan),
+    Subquery(SubqueryPlan),
     Call(CallPlan),
     BinaryExpr(BinaryExprPlan),
     UnaryExpr(UnaryExprPlan),
@@ -28,6 +29,8 @@ pub enum PlanType {
 pub struct VectorQueryPlan {
     pub name: Option<String>,
     pub matchers: Vec<(String, String)>,
+    pub at: Option<i64>, // @ modifier timestamp, -1 for start(), -2 for end()
+    pub offset: Option<i64>, // offset in milliseconds, negative for future data
 }
 
 #[derive(Debug, Clone)]
@@ -37,9 +40,18 @@ pub struct MatrixQueryPlan {
 }
 
 #[derive(Debug, Clone)]
+pub struct SubqueryPlan {
+    pub expr: Box<QueryPlan>,
+    pub range: i64,
+    pub resolution: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct CallPlan {
     pub func: Function,
     pub args: Vec<QueryPlan>,
+    pub k: Option<usize>, // For topk/bottomk functions
+    pub quantile: Option<f64>, // For quantile function (0.0 - 1.0)
 }
 
 #[derive(Debug, Clone)]
@@ -66,18 +78,13 @@ pub struct AggregationPlan {
 impl fmt::Display for QueryPlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.plan_type {
-            PlanType::VectorQuery(plan) => write!(f, "VectorQuery({:?})
-", plan),
-            PlanType::MatrixQuery(plan) => write!(f, "MatrixQuery({:?})
-", plan),
-            PlanType::Call(plan) => write!(f, "Call({:?})
-", plan),
-            PlanType::BinaryExpr(plan) => write!(f, "BinaryExpr({:?})
-", plan),
-            PlanType::UnaryExpr(plan) => write!(f, "UnaryExpr({:?})
-", plan),
-            PlanType::Aggregation(plan) => write!(f, "Aggregation({:?})
-", plan),
+            PlanType::VectorQuery(plan) => write!(f, "VectorQuery({:?})", plan),
+            PlanType::MatrixQuery(plan) => write!(f, "MatrixQuery({:?})", plan),
+            PlanType::Subquery(plan) => write!(f, "Subquery({:?})", plan),
+            PlanType::Call(plan) => write!(f, "Call({:?})", plan),
+            PlanType::BinaryExpr(plan) => write!(f, "BinaryExpr({:?})", plan),
+            PlanType::UnaryExpr(plan) => write!(f, "UnaryExpr({:?})", plan),
+            PlanType::Aggregation(plan) => write!(f, "Aggregation({:?})", plan),
         }
     }
 }
@@ -101,6 +108,7 @@ impl QueryPlanner {
         match &expr.expr_type {
             ExprType::VectorSelector(vs) => self.plan_vector_selector(vs),
             ExprType::MatrixSelector(ms) => self.plan_matrix_selector(ms),
+            ExprType::Subquery(sq) => self.plan_subquery(sq),
             ExprType::Call(call) => self.plan_call(call),
             ExprType::BinaryExpr(bin) => self.plan_binary_expr(bin),
             ExprType::UnaryExpr(unary) => self.plan_unary_expr(unary),
@@ -113,11 +121,11 @@ impl QueryPlanner {
 
     fn plan_vector_selector(&self, vs: &VectorSelector) -> Result<PlanType> {
         let mut matchers = Vec::new();
-        
+
         if let Some(name) = &vs.name {
             matchers.push(("__name__".to_string(), name.clone()));
         }
-        
+
         for matcher in &vs.matchers.matchers {
             match matcher.op {
                 crate::query::parser::MatchOp::Equal => {
@@ -128,10 +136,18 @@ impl QueryPlanner {
                 }
             }
         }
-        
+
+        // Extract @ modifier timestamp
+        let at = vs.at.as_ref().map(|at| at.timestamp);
+
+        // Extract offset (in milliseconds)
+        let offset = vs.offset;
+
         Ok(PlanType::VectorQuery(VectorQueryPlan {
             name: vs.name.clone(),
             matchers,
+            at,
+            offset,
         }))
     }
 
@@ -147,6 +163,21 @@ impl QueryPlanner {
         }
     }
 
+    fn plan_subquery(&self, sq: &crate::query::parser::Subquery) -> Result<PlanType> {
+        let expr_plan = self.plan_expr(&sq.expr)?;
+        
+        Ok(PlanType::Subquery(SubqueryPlan {
+            expr: Box::new(QueryPlan {
+                plan_type: expr_plan,
+                start: 0, // Will be set during execution
+                end: 0,
+                step: sq.resolution,
+            }),
+            range: sq.range,
+            resolution: sq.resolution,
+        }))
+    }
+
     fn plan_call(&self, call: &Call) -> Result<PlanType> {
         let mut args = Vec::new();
         for arg in &call.args {
@@ -158,11 +189,61 @@ impl QueryPlanner {
                 step: 0,
             });
         }
-        
+
+        // Extract k value for topk/bottomk functions from first argument
+        let k = if matches!(call.func, Function::TopK | Function::BottomK) {
+            if let Some(first_arg) = call.args.first() {
+                self.extract_k_value(first_arg)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Extract quantile value for quantile function from first argument
+        let quantile = if matches!(call.func, Function::Quantile) {
+            if let Some(first_arg) = call.args.first() {
+                self.extract_quantile_value(first_arg)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(PlanType::Call(CallPlan {
             func: call.func.clone(),
             args,
+            k,
+            quantile,
         }))
+    }
+
+    fn extract_k_value(&self, expr: &crate::query::parser::Expr) -> Option<usize> {
+        match &expr.expr_type {
+            crate::query::parser::ExprType::NumberLiteral(n) => {
+                if *n >= 0.0 && *n == n.trunc() {
+                    Some(*n as usize)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn extract_quantile_value(&self, expr: &crate::query::parser::Expr) -> Option<f64> {
+        match &expr.expr_type {
+            crate::query::parser::ExprType::NumberLiteral(n) => {
+                if *n >= 0.0 && *n <= 1.0 {
+                    Some(*n)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     fn plan_binary_expr(&self, bin: &crate::query::parser::BinaryExpr) -> Result<PlanType> {

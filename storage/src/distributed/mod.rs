@@ -315,6 +315,8 @@ impl DistributedStorage {
                     .find(|(k, _)| k == "__name__")
                     .map(|(_, v)| v.clone()),
                 matchers: matchers.to_vec(),
+                at: None,
+                offset: None,
             }),
             start,
             end,
