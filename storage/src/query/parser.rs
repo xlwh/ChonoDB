@@ -19,6 +19,7 @@ impl Expr {
 pub enum ExprType {
     VectorSelector(VectorSelector),
     MatrixSelector(MatrixSelector),
+    Subquery(Subquery),
     Call(Call),
     BinaryExpr(BinaryExpr),
     UnaryExpr(UnaryExpr),
@@ -41,6 +42,14 @@ pub struct VectorSelector {
 pub struct MatrixSelector {
     pub vector_selector: VectorSelector,
     pub range: i64,
+}
+
+/// 子查询
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Subquery {
+    pub expr: Box<Expr>,
+    pub range: i64,      // 时间范围（毫秒）
+    pub resolution: i64, // 分辨率/步长（毫秒）
 }
 
 /// 函数调用
@@ -480,63 +489,307 @@ impl Function {
 pub fn parse_promql(query: &str) -> Result<Expr> {
     // 简化实现：解析基本的指标名称和标签匹配器
     let query = query.trim();
-    
+
     // 检查是否是函数调用
     if let Some(paren_idx) = query.find('(') {
         let func_name = &query[..paren_idx].trim();
         if let Some(func) = Function::from_name(func_name) {
+            // 找到匹配的右括号（处理嵌套）
+            let mut depth = 1;
+            let mut end_idx = paren_idx + 1;
+            for (i, c) in query[paren_idx + 1..].chars().enumerate() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end_idx = paren_idx + 1 + i;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             // 解析函数参数
-            let args_str = &query[paren_idx + 1..query.len() - 1];
+            let args_str = &query[paren_idx + 1..end_idx];
             let args = parse_args(args_str)?;
+
+            // 检查函数调用后面是否有子查询修饰符
+            let after_call = &query[end_idx + 1..].trim();
+            if after_call.starts_with('[') && after_call.contains(':') {
+                // 这是子查询，需要递归解析
+                let subquery_expr = Expr::new(ExprType::Call(Call { func, args }));
+                return parse_subquery_suffix(subquery_expr, after_call);
+            }
+
             return Ok(Expr::new(ExprType::Call(Call { func, args })));
         }
     }
-    
-    // 检查是否是矩阵选择器
-    if let Some(bracket_idx) = query.find('[') {
-        let vector_part = &query[..bracket_idx];
-        let range_part = &query[bracket_idx + 1..query.len() - 1];
-        let range = parse_duration(range_part)?;
-        
-        let vector_selector = parse_vector_selector(vector_part)?;
+
+    // 检查是否是聚合表达式
+    if let Some(func) = Function::from_name(query.split('(').next().unwrap().trim()) {
+        if is_aggregation_function(&func) {
+            if let Some(paren_idx) = query.find('(') {
+                let mut depth = 1;
+                let mut end_idx = paren_idx + 1;
+                for (i, c) in query[paren_idx + 1..].chars().enumerate() {
+                    match c {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end_idx = paren_idx + 1 + i;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                let inner = &query[paren_idx + 1..end_idx];
+                let expr = parse_promql(inner)?;
+
+                // 检查后面是否有子查询修饰符
+                let after_agg = &query[end_idx + 1..].trim();
+                if after_agg.starts_with('[') && after_agg.contains(':') {
+                    let agg_expr = Expr::new(ExprType::Aggregation(Aggregation {
+                        op: func,
+                        expr: Box::new(expr),
+                        grouping: vec![],
+                        without: false,
+                    }));
+                    return parse_subquery_suffix(agg_expr, after_agg);
+                }
+
+                return Ok(Expr::new(ExprType::Aggregation(Aggregation {
+                    op: func,
+                    expr: Box::new(expr),
+                    grouping: vec![],
+                    without: false,
+                })));
+            }
+        }
+    }
+
+    // 检查是否是子查询 (包含 [<range>:<resolution>] 语法)
+    // 需要找到最外层的方括号
+    if let Some(bracket_idx) = find_outermost_bracket(query) {
+        let expr_part = &query[..bracket_idx];
+        let inner = &query[bracket_idx + 1..query.len() - 1];
+
+        // 检查是否包含冒号，表示是子查询
+        if inner.contains(':') {
+            // 解析子查询
+            let parts: Vec<&str> = inner.split(':').collect();
+            if parts.len() == 2 {
+                let range = parse_duration(parts[0].trim())?;
+                let resolution = parse_duration(parts[1].trim())?;
+
+                let expr = parse_promql(expr_part.trim())?;
+                return Ok(Expr::new(ExprType::Subquery(Subquery {
+                    expr: Box::new(expr),
+                    range,
+                    resolution,
+                })));
+            }
+        }
+
+        // 矩阵选择器
+        let range = parse_duration(inner)?;
+        let vector_selector = parse_vector_selector(expr_part)?;
         return Ok(Expr::new(ExprType::MatrixSelector(MatrixSelector {
             vector_selector,
             range,
         })));
     }
-    
+
     // 解析向量选择器
     let vector_selector = parse_vector_selector(query)?;
     Ok(Expr::new(ExprType::VectorSelector(vector_selector)))
 }
 
+/// 找到最外层的方括号位置
+fn find_outermost_bracket(query: &str) -> Option<usize> {
+    let mut depth = 0;
+    for (i, c) in query.chars().enumerate() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            _ => {}
+        }
+        // 如果在最外层遇到右方括号，返回其位置
+        if c == ']' && depth == 0 {
+            // 找到匹配的左方括号
+            let mut inner_depth = 1;
+            for j in (0..i).rev() {
+                match query.chars().nth(j).unwrap() {
+                    '[' => {
+                        inner_depth -= 1;
+                        if inner_depth == 0 {
+                            return Some(j);
+                        }
+                    }
+                    ']' => inner_depth += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 解析子查询后缀 [<range>:<resolution>]
+fn parse_subquery_suffix(expr: Expr, suffix: &str) -> Result<Expr> {
+    if !suffix.starts_with('[') || !suffix.ends_with(']') {
+        return Err(Error::InvalidData("Invalid subquery suffix".to_string()));
+    }
+
+    let inner = &suffix[1..suffix.len() - 1];
+    let parts: Vec<&str> = inner.split(':').collect();
+
+    if parts.len() != 2 {
+        return Err(Error::InvalidData("Invalid subquery syntax, expected [<range>:<resolution>]".to_string()));
+    }
+
+    let range = parse_duration(parts[0].trim())?;
+    let resolution = parse_duration(parts[1].trim())?;
+
+    Ok(Expr::new(ExprType::Subquery(Subquery {
+        expr: Box::new(expr),
+        range,
+        resolution,
+    })))
+}
+
+/// 检查是否是聚合函数
+fn is_aggregation_function(func: &Function) -> bool {
+    matches!(func,
+        Function::Sum | Function::Avg | Function::Min | Function::Max |
+        Function::Count | Function::Stddev | Function::Stdvar |
+        Function::TopK | Function::BottomK | Function::Quantile |
+        Function::CountValues
+    )
+}
+
 fn parse_vector_selector(s: &str) -> Result<VectorSelector> {
     let s = s.trim();
-    
+
     // 解析名称和标签
     let mut name = None;
     let mut matchers = Vec::new();
-    
-    if let Some(brace_idx) = s.find('{') {
+    let mut offset = None;
+    let mut at = None;
+
+    // 首先检查是否有 offset 修饰符（在 @ 之前或之后都可能出现）
+    // offset 修饰符格式: "offset 5m" 或 "offset -1h"
+    let s_without_offset = if let Some(offset_idx) = s.to_lowercase().find(" offset ") {
+        let before_offset = &s[..offset_idx];
+        let after_offset = &s[offset_idx + 8..].trim(); // Skip " offset "
+
+        // 解析 offset 值，但需要注意 @ 修饰符可能在 offset 之后
+        let offset_value = if let Some(at_idx) = after_offset.find(" @") {
+            // offset 后面有 @，只取 offset 部分
+            &after_offset[..at_idx].trim()
+        } else if after_offset.find('@').is_some() {
+            // offset 后面有 @（没有空格）
+            let at_idx = after_offset.find('@').unwrap();
+            &after_offset[..at_idx].trim()
+        } else {
+            after_offset
+        };
+
+        offset = Some(parse_offset_modifier(offset_value)?);
+        before_offset
+    } else {
+        s
+    };
+
+    // 然后检查是否有 @ 修饰符
+    let base_str = if let Some(at_idx) = s_without_offset.find(" @") {
+        let base = &s_without_offset[..at_idx];
+        let at_part = &s_without_offset[at_idx + 2..].trim(); // Skip " @"
+
+        // 解析 @ 修饰符
+        at = Some(parse_at_modifier(at_part)?);
+        base
+    } else if let Some(at_idx) = s_without_offset.find('@') {
+        let base = &s_without_offset[..at_idx];
+        let at_part = &s_without_offset[at_idx + 1..].trim();
+
+        // 解析 @ 修饰符
+        at = Some(parse_at_modifier(at_part)?);
+        base
+    } else {
+        s_without_offset
+    };
+
+    if let Some(brace_idx) = base_str.find('{') {
         // 有标签匹配器
         name = if brace_idx > 0 {
-            Some(s[..brace_idx].trim().to_string())
+            Some(base_str[..brace_idx].trim().to_string())
         } else {
             None
         };
-        
-        let matchers_str = &s[brace_idx + 1..s.len() - 1];
+
+        let matchers_str = &base_str[brace_idx + 1..base_str.len() - 1];
         matchers = parse_matchers(matchers_str)?;
     } else {
         // 只有名称
-        name = Some(s.to_string());
+        name = Some(base_str.to_string());
     }
-    
+
     Ok(VectorSelector {
         name,
         matchers: Matchers::new(matchers),
-        offset: None,
-        at: None,
+        offset,
+        at,
+    })
+}
+
+fn parse_offset_modifier(s: &str) -> Result<i64> {
+    let s = s.trim();
+
+    // 检查是否有负号
+    let (is_negative, s) = if s.starts_with('-') {
+        (true, s[1..].trim())
+    } else if s.starts_with('+') {
+        (false, s[1..].trim())
+    } else {
+        (false, s)
+    };
+
+    // 解析持续时间，如 "5m", "1h", "2d"
+    let duration_ms = parse_duration(s)?;
+
+    // 应用符号
+    if is_negative {
+        Ok(-duration_ms)
+    } else {
+        Ok(duration_ms)
+    }
+}
+
+fn parse_at_modifier(s: &str) -> Result<AtModifier> {
+    let s = s.trim();
+
+    // 检查是否是 start() 或 end()
+    if s.eq_ignore_ascii_case("start()") {
+        // 使用特殊值 -1 表示 start()
+        return Ok(AtModifier { timestamp: -1 });
+    }
+    if s.eq_ignore_ascii_case("end()") {
+        // 使用特殊值 -2 表示 end()
+        return Ok(AtModifier { timestamp: -2 });
+    }
+
+    // 解析时间戳（可以是整数或浮点数）
+    let timestamp = s.parse::<f64>()
+        .map_err(|_| Error::InvalidData(format!("Invalid @ modifier timestamp: {}", s)))?;
+
+    // 转换为毫秒时间戳
+    Ok(AtModifier {
+        timestamp: timestamp as i64,
     })
 }
 

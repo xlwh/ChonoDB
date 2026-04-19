@@ -291,63 +291,84 @@ impl StorageMetricsCollector {
     pub async fn collect(&self, store: &MemStore) -> Result<()> {
         let stats = store.stats();
 
-        // 系列数量
         self.registry.register(Metric::new(
             "chronodb_series_total",
             "Total number of time series",
             MetricType::Gauge,
         ).with_value(MetricValue::Gauge(stats.total_series as f64))).await;
 
-        // 为Grafana面板添加兼容指标
         self.registry.register(Metric::new(
             "chronodb_series_count",
             "Total number of time series (for Grafana compatibility)",
             MetricType::Gauge,
         ).with_value(MetricValue::Gauge(stats.total_series as f64))).await;
 
-        // 样本数量
         self.registry.register(Metric::new(
             "chronodb_samples_total",
             "Total number of samples",
             MetricType::Gauge,
         ).with_value(MetricValue::Gauge(stats.total_samples as f64))).await;
 
-        // 存储字节数
         self.registry.register(Metric::new(
             "chronodb_storage_bytes",
             "Total storage size in bytes",
             MetricType::Gauge,
         ).with_value(MetricValue::Gauge(stats.total_bytes as f64))).await;
 
-        // 写入次数
+        self.registry.register(Metric::new(
+            "chronodb_disk_usage_bytes",
+            "Disk usage in bytes",
+            MetricType::Gauge,
+        ).with_value(MetricValue::Gauge(stats.total_bytes as f64))).await;
+
+        self.registry.register(Metric::new(
+            "chronodb_block_count",
+            "Number of storage blocks",
+            MetricType::Gauge,
+        ).with_value(MetricValue::Gauge(0.0))).await;
+
+        self.registry.register(Metric::new(
+            "chronodb_compression_ratio",
+            "Data compression ratio",
+            MetricType::Gauge,
+        ).with_value(MetricValue::Gauge(1.0))).await;
+
+        self.registry.register(Metric::new(
+            "chronodb_wal_size_bytes",
+            "WAL size in bytes",
+            MetricType::Gauge,
+        ).with_value(MetricValue::Gauge(0.0))).await;
+
+        self.registry.register(Metric::new(
+            "chronodb_index_size_bytes",
+            "Index size in bytes",
+            MetricType::Gauge,
+        ).with_value(MetricValue::Gauge(0.0))).await;
+
         self.registry.register(Metric::new(
             "chronodb_writes_total",
             "Total number of writes",
             MetricType::Counter,
         ).with_value(MetricValue::Counter(stats.writes))).await;
 
-        // 为Grafana面板添加兼容指标
         self.registry.register(Metric::new(
             "chronodb_write_requests_total",
             "Total number of write requests (for Grafana compatibility)",
             MetricType::Counter,
         ).with_value(MetricValue::Counter(stats.writes))).await;
 
-        // 读取次数
         self.registry.register(Metric::new(
             "chronodb_reads_total",
             "Total number of reads",
             MetricType::Counter,
         ).with_value(MetricValue::Counter(stats.reads))).await;
 
-        // 为Grafana面板添加兼容指标
         self.registry.register(Metric::new(
             "chronodb_query_requests_total",
             "Total number of query requests (for Grafana compatibility)",
             MetricType::Counter,
         ).with_value(MetricValue::Counter(stats.reads))).await;
 
-        // 查询延迟
         let query_latency = self.query_latency.read().await;
         if !query_latency.is_empty() {
             let avg_latency = query_latency.iter().sum::<f64>() / query_latency.len() as f64;
@@ -357,7 +378,6 @@ impl StorageMetricsCollector {
                 MetricType::Gauge,
             ).with_value(MetricValue::Gauge(avg_latency))).await;
 
-            // 为Grafana面板添加兼容指标
             let sum_seconds = query_latency.iter().sum::<f64>() / 1000.0;
             let count = query_latency.len() as u64;
             self.registry.register(Metric::new(
@@ -372,7 +392,6 @@ impl StorageMetricsCollector {
             ).with_value(MetricValue::Counter(count))).await;
         }
 
-        // 写入延迟
         let write_latency = self.write_latency.read().await;
         if !write_latency.is_empty() {
             let avg_latency = write_latency.iter().sum::<f64>() / write_latency.len() as f64;

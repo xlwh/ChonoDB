@@ -44,39 +44,12 @@ pub struct SimdVectorizedExecutor;
 #[cfg(target_feature = "sse2")]
 impl VectorizedExecutor for SimdVectorizedExecutor {
     fn aggregate(&self, samples: &[Sample]) -> Result<f64> {
-        use std::arch::x86_64::*;
-        
         if samples.is_empty() {
             return Ok(0.0);
         }
         
-        let mut sum = 0.0;
-        let mut i = 0;
-        let len = samples.len();
-        
-        // 使用 SIMD 处理批量数据
-        while i + 4 <= len {
-            unsafe {
-                let mut vec_sum = _mm_setzero_pd();
-                
-                for j in 0..4 {
-                    let val = _mm_set_sd(samples[i + j].value);
-                    vec_sum = _mm_add_pd(vec_sum, val);
-                }
-                
-                let mut temp = [0.0; 2];
-                _mm_store_pd(temp.as_mut_ptr(), vec_sum);
-                sum += temp[0] + temp[1];
-            }
-            i += 4;
-        }
-        
-        // 处理剩余数据
-        for j in i..len {
-            sum += samples[j].value;
-        }
-        
-        Ok(sum / len as f64)
+        let sum: f64 = samples.iter().map(|s| s.value).sum();
+        Ok(sum / samples.len() as f64)
     }
     
     fn filter(&self, samples: &[Sample], predicate: &dyn Fn(f64) -> bool) -> Result<Vec<Sample>> {

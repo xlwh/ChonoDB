@@ -377,6 +377,9 @@ impl QueryCoordinator {
             PlanType::Aggregation(agg) => {
                 Self::extract_matchers_from_plan(&agg.expr.plan_type)
             }
+            PlanType::Subquery(sq) => {
+                Self::extract_matchers_from_plan(&sq.expr.plan_type)
+            }
         }
     }
 

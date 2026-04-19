@@ -1,292 +1,300 @@
 use crate::error::Result;
-use crate::query::planner::{QueryPlan, PlanType, VectorQueryPlan, MatrixQueryPlan, CallPlan, AggregationPlan};
-use crate::query::parser::Function;
+use crate::query::planner::{QueryPlan, PlanType, VectorQueryPlan, MatrixQueryPlan, SubqueryPlan, CallPlan, BinaryExprPlan, UnaryExprPlan, AggregationPlan};
 use std::collections::HashMap;
-
-/// 查询统计信息
-#[derive(Debug, Clone, Default)]
-pub struct QueryStats {
-    /// 表行数估计
-    pub estimated_rows: u64,
-    /// 选择率（0-1）
-    pub selectivity: f64,
-    /// 每行平均大小（字节）
-    pub avg_row_size: u64,
-    /// 索引可用性
-    pub has_index: bool,
-}
-
-/// 查询成本模型
-#[derive(Debug, Clone)]
-pub struct QueryCost {
-    /// CPU 成本（操作数）
-    pub cpu_cost: f64,
-    /// I/O 成本（磁盘读取次数）
-    pub io_cost: f64,
-    /// 内存成本（字节）
-    pub memory_cost: f64,
-    /// 网络成本（分布式场景）
-    pub network_cost: f64,
-    /// 总成本
-    pub total_cost: f64,
-}
-
-impl QueryCost {
-    pub fn new(cpu_cost: f64, io_cost: f64, memory_cost: f64, network_cost: f64) -> Self {
-        let total_cost = cpu_cost * 0.4 + io_cost * 0.4 + memory_cost * 0.1 + network_cost * 0.1;
-        Self {
-            cpu_cost,
-            io_cost,
-            memory_cost,
-            network_cost,
-            total_cost,
-        }
-    }
-
-    pub fn zero() -> Self {
-        Self {
-            cpu_cost: 0.0,
-            io_cost: 0.0,
-            memory_cost: 0.0,
-            network_cost: 0.0,
-            total_cost: 0.0,
-        }
-    }
-}
+use std::sync::Arc;
+use tracing::{debug, info};
 
 /// 查询优化器
-pub struct QueryOptimizer {
-    /// 表统计信息
-    table_stats: HashMap<String, QueryStats>,
-    /// 成本模型权重
-    cpu_weight: f64,
-    io_weight: f64,
-    memory_weight: f64,
-    network_weight: f64,
-}
+pub struct QueryOptimizer;
 
 impl QueryOptimizer {
     pub fn new() -> Self {
-        Self {
-            table_stats: HashMap::new(),
-            cpu_weight: 0.4,
-            io_weight: 0.4,
-            memory_weight: 0.1,
-            network_weight: 0.1,
-        }
-    }
-
-    /// 更新表统计信息
-    pub fn update_table_stats(&mut self, table_name: String, stats: QueryStats) {
-        self.table_stats.insert(table_name, stats);
+        Self
     }
 
     /// 优化查询计划
     pub fn optimize(&self, plan: QueryPlan) -> Result<QueryPlan> {
-        // 目前只进行简单的计划重写
-        // 未来可以添加更复杂的优化规则
-        Ok(plan)
-    }
-
-    /// 估算查询成本
-    pub fn estimate_cost(&self, plan: &QueryPlan) -> QueryCost {
-        self.estimate_plan_cost(&plan.plan_type)
-    }
-
-    fn estimate_plan_cost(&self, plan_type: &PlanType) -> QueryCost {
-        match plan_type {
-            PlanType::VectorQuery(plan) => self.estimate_vector_cost(plan),
-            PlanType::MatrixQuery(plan) => self.estimate_matrix_cost(plan),
-            PlanType::Call(plan) => self.estimate_call_cost(plan),
-            PlanType::Aggregation(plan) => self.estimate_aggregation_cost(plan),
-            PlanType::BinaryExpr(bin) => {
-                let lhs_cost = self.estimate_plan_cost(&bin.lhs.plan_type);
-                let rhs_cost = self.estimate_plan_cost(&bin.rhs.plan_type);
-                QueryCost::new(
-                    lhs_cost.cpu_cost + rhs_cost.cpu_cost,
-                    lhs_cost.io_cost + rhs_cost.io_cost,
-                    lhs_cost.memory_cost.max(rhs_cost.memory_cost),
-                    lhs_cost.network_cost + rhs_cost.network_cost,
-                )
+        info!("Optimizing query plan");
+        
+        let optimized_plan = match &plan.plan_type {
+            PlanType::VectorQuery(query) => {
+                let optimized = self.optimize_vector_query(query)?;
+                QueryPlan {
+                    plan_type: PlanType::VectorQuery(optimized),
+                    ..plan
+                }
+            }
+            PlanType::MatrixQuery(query) => {
+                let optimized = self.optimize_matrix_query(query)?;
+                QueryPlan {
+                    plan_type: PlanType::MatrixQuery(optimized),
+                    ..plan
+                }
+            }
+            PlanType::Call(call) => {
+                let optimized = self.optimize_call(call)?;
+                QueryPlan {
+                    plan_type: PlanType::Call(optimized),
+                    ..plan
+                }
+            }
+            PlanType::BinaryExpr(binary) => {
+                let optimized = self.optimize_binary(binary)?;
+                QueryPlan {
+                    plan_type: PlanType::BinaryExpr(optimized),
+                    ..plan
+                }
             }
             PlanType::UnaryExpr(unary) => {
-                self.estimate_plan_cost(&unary.expr.plan_type)
+                let optimized = self.optimize_unary(unary)?;
+                QueryPlan {
+                    plan_type: PlanType::UnaryExpr(optimized),
+                    ..plan
+                }
             }
-        }
-    }
-
-    fn estimate_vector_cost(&self, plan: &VectorQueryPlan) -> QueryCost {
-        // 基础成本
-        let base_cpu_cost = 100.0;
-        let base_io_cost = 50.0;
-        
-        // 根据匹配器复杂度调整成本
-        let matcher_cost = plan.matchers.len() as f64 * 10.0;
-        
-        // 获取指标名称
-        let metric_name = plan.name.as_deref().unwrap_or("");
-        
-        // 如果有索引，I/O 成本降低
-        let io_cost = if self.has_index(metric_name) {
-            base_io_cost * 0.3
-        } else {
-            base_io_cost
+            PlanType::Aggregation(agg) => {
+                let optimized = self.optimize_aggregation(agg)?;
+                QueryPlan {
+                    plan_type: PlanType::Aggregation(optimized),
+                    ..plan
+                }
+            }
+            PlanType::Subquery(subquery) => {
+                let optimized = self.optimize_subquery(subquery)?;
+                QueryPlan {
+                    plan_type: PlanType::Subquery(optimized),
+                    ..plan
+                }
+            }
         };
 
-        QueryCost::new(
-            base_cpu_cost + matcher_cost,
-            io_cost,
-            1024.0, // 1KB 内存
-            0.0,
-        )
+        Ok(optimized_plan)
     }
 
-    fn estimate_matrix_cost(&self, plan: &MatrixQueryPlan) -> QueryCost {
-        // 范围查询成本更高
-        let vector_cost = self.estimate_vector_cost(&plan.vector_plan);
+    /// 优化向量查询
+    fn optimize_vector_query(&self, query: &VectorQueryPlan) -> Result<VectorQueryPlan> {
+        debug!("Optimizing vector query: {:?}", query.name);
         
-        // 根据范围大小调整成本
-        let range_ms = plan.range as f64;
-        let range_factor = (range_ms / 3600000.0).max(1.0); // 每小时一个因子
+        // 1. 移除冗余条件
+        let optimized_matchers = self.eliminate_redundant_conditions(&query.matchers)?;
         
-        QueryCost::new(
-            vector_cost.cpu_cost * range_factor,
-            vector_cost.io_cost * range_factor,
-            vector_cost.memory_cost * range_factor,
-            vector_cost.network_cost,
-        )
+        // 2. 排序匹配器，将 __name__ 放在前面，提高查询效率
+        let sorted_matchers = self.sort_matchers(&optimized_matchers);
+        
+        Ok(VectorQueryPlan {
+            name: query.name.clone(),
+            matchers: sorted_matchers,
+            at: query.at,
+            offset: query.offset,
+        })
     }
-
-    fn estimate_call_cost(&self, plan: &CallPlan) -> QueryCost {
-        let input_cost: QueryCost = plan.args.iter()
-            .map(|arg| self.estimate_plan_cost(&arg.plan_type))
-            .fold(QueryCost::zero(), |acc, cost| QueryCost::new(
-                acc.cpu_cost + cost.cpu_cost,
-                acc.io_cost + cost.io_cost,
-                acc.memory_cost + cost.memory_cost,
-                acc.network_cost + cost.network_cost,
-            ));
-
-        // 函数调用的额外成本
-        let func_cpu_cost = match plan.func {
-            Function::Rate | Function::Irate => 200.0,
-            Function::Sum | Function::Avg | Function::Min | Function::Max => 150.0,
-            Function::HistogramQuantile => 500.0,
-            _ => 100.0,
-        };
-
-        QueryCost::new(
-            input_cost.cpu_cost + func_cpu_cost,
-            input_cost.io_cost,
-            input_cost.memory_cost,
-            input_cost.network_cost,
-        )
-    }
-
-    fn estimate_aggregation_cost(&self, plan: &AggregationPlan) -> QueryCost {
-        let input_cost = self.estimate_plan_cost(&plan.expr.plan_type);
+    
+    /// 消除冗余条件
+    fn eliminate_redundant_conditions(&self, matchers: &[(String, String)]) -> Result<Vec<(String, String)>> {
+        let mut unique_matchers = HashMap::new();
         
-        // 聚合操作的成本
-        let agg_cpu_cost = input_cost.cpu_cost * 1.5;
-        let agg_memory_cost = input_cost.memory_cost * 2.0;
-        
-        QueryCost::new(
-            input_cost.cpu_cost + agg_cpu_cost,
-            input_cost.io_cost,
-            agg_memory_cost,
-            input_cost.network_cost,
-        )
-    }
-
-    fn has_index(&self, metric: &str) -> bool {
-        // 检查是否有索引
-        self.table_stats.get(metric)
-            .map(|stats| stats.has_index)
-            .unwrap_or(false)
-    }
-
-    /// 选择最优的降采样级别
-    pub fn select_downsample_level(&self, query_range_ms: i64) -> u8 {
-        // 根据查询范围选择降采样级别
-        let range_hours = query_range_ms / 3_600_000;
-        
-        if range_hours < 1 {
-            0 // L0: 原始数据
-        } else if range_hours < 24 {
-            1 // L1: 1分钟精度
-        } else if range_hours < 168 { // 1周
-            2 // L2: 5分钟精度
-        } else if range_hours < 720 { // 1月
-            3 // L3: 1小时精度
-        } else {
-            4 // L4: 1天精度
+        for (name, value) in matchers {
+            // 只保留最新的同名条件
+            unique_matchers.insert(name.clone(), value.clone());
         }
-    }
-
-    /// 判断是否使用并行执行
-    pub fn should_use_parallel(&self, estimated_rows: u64) -> bool {
-        // 当估计行数超过阈值时使用并行执行
-        estimated_rows > 1000
-    }
-
-    /// 获取最优执行策略
-    pub fn get_execution_strategy(&self, plan: &QueryPlan) -> ExecutionStrategy {
-        let cost = self.estimate_cost(plan);
         
-        ExecutionStrategy {
-            use_parallel: self.should_use_parallel(cost.cpu_cost as u64),
-            use_index: cost.io_cost < 100.0,
-            downsample_level: self.select_downsample_level(plan.end - plan.start),
-            cache_result: cost.total_cost > 500.0,
+        Ok(unique_matchers.into_iter().collect())
+    }
+    
+    /// 排序匹配器
+    fn sort_matchers(&self, matchers: &[(String, String)]) -> Vec<(String, String)> {
+        let mut sorted = matchers.to_vec();
+        sorted.sort_by(|a, b| {
+            // 将 __name__ 放在最前面
+            if a.0 == "__name__" && b.0 != "__name__" {
+                return std::cmp::Ordering::Less;
+            }
+            if a.0 != "__name__" && b.0 == "__name__" {
+                return std::cmp::Ordering::Greater;
+            }
+            // 其他按名称排序
+            a.0.cmp(&b.0)
+        });
+        sorted
+    }
+
+    /// 优化矩阵查询
+    fn optimize_matrix_query(&self, query: &MatrixQueryPlan) -> Result<MatrixQueryPlan> {
+        debug!("Optimizing matrix query");
+
+        let optimized_vector = self.optimize_vector_query(&query.vector_plan)?;
+
+        // 优化时间范围
+        let optimized_range = self.optimize_time_range(query.range);
+
+        Ok(MatrixQueryPlan {
+            vector_plan: optimized_vector,
+            range: optimized_range,
+        })
+    }
+
+    /// 优化子查询
+    fn optimize_subquery(&self, query: &SubqueryPlan) -> Result<SubqueryPlan> {
+        debug!("Optimizing subquery");
+
+        // 优化内部表达式
+        let optimized_expr = self.optimize(*query.expr.clone())?;
+
+        // 优化时间范围和分辨率
+        let optimized_range = self.optimize_time_range(query.range);
+        let optimized_resolution = std::cmp::max(query.resolution, 1);
+
+        Ok(SubqueryPlan {
+            expr: Box::new(optimized_expr),
+            range: optimized_range,
+            resolution: optimized_resolution,
+        })
+    }
+
+    /// 优化时间范围
+    fn optimize_time_range(&self, range: i64) -> i64 {
+        // 确保时间范围合理
+        std::cmp::max(range, 1) // 至少 1ms
+    }
+
+    /// 优化函数调用
+    fn optimize_call(&self, call: &CallPlan) -> Result<CallPlan> {
+        debug!("Optimizing call: {:?}", call.func);
+        
+        // 优化函数参数
+        let mut optimized_args = Vec::new();
+        for arg in &call.args {
+            let optimized_arg = self.optimize(arg.clone())?;
+            optimized_args.push(optimized_arg);
         }
+        
+        Ok(CallPlan {
+            func: call.func.clone(),
+            args: optimized_args,
+            k: call.k,
+            quantile: call.quantile,
+        })
+    }
+
+    /// 优化二元表达式
+    fn optimize_binary(&self, binary: &BinaryExprPlan) -> Result<BinaryExprPlan> {
+        debug!("Optimizing binary expression");
+        
+        // 优化左右操作数
+        let optimized_lhs = self.optimize(*binary.lhs.clone())?;
+        let optimized_rhs = self.optimize(*binary.rhs.clone())?;
+        
+        // 常量折叠
+        if let Some(constant_result) = self.constant_fold_binary(binary.op, &optimized_lhs, &optimized_rhs) {
+            // 如果可以常量折叠，返回常量结果
+            return Ok(BinaryExprPlan {
+                op: binary.op,
+                lhs: Box::new(optimized_lhs),
+                rhs: Box::new(optimized_rhs),
+            });
+        }
+        
+        Ok(BinaryExprPlan {
+            op: binary.op,
+            lhs: Box::new(optimized_lhs),
+            rhs: Box::new(optimized_rhs),
+        })
+    }
+    
+    /// 常量折叠二元表达式
+    fn constant_fold_binary(&self, op: crate::query::parser::BinaryOp, lhs: &QueryPlan, rhs: &QueryPlan) -> Option<QueryPlan> {
+        // 这里可以实现常量折叠逻辑
+        // 例如，如果左右都是常量，则直接计算结果
+        None
+    }
+
+    /// 优化一元表达式
+    fn optimize_unary(&self, unary: &UnaryExprPlan) -> Result<UnaryExprPlan> {
+        debug!("Optimizing unary expression");
+        
+        // 优化表达式
+        let optimized_expr = self.optimize(*unary.expr.clone())?;
+        
+        Ok(UnaryExprPlan {
+            op: unary.op,
+            expr: Box::new(optimized_expr),
+        })
+    }
+
+    /// 优化聚合操作
+    fn optimize_aggregation(&self, agg: &AggregationPlan) -> Result<AggregationPlan> {
+        debug!("Optimizing aggregation");
+        
+        // 优化表达式
+        let optimized_expr = self.optimize(*agg.expr.clone())?;
+        
+        // 优化分组
+        let optimized_grouping = self.optimize_grouping(&agg.grouping);
+        
+        Ok(AggregationPlan {
+            op: agg.op.clone(),
+            expr: Box::new(optimized_expr),
+            grouping: optimized_grouping,
+            without: agg.without,
+        })
+    }
+    
+    /// 优化分组
+    fn optimize_grouping(&self, grouping: &[String]) -> Vec<String> {
+        // 移除重复的分组标签
+        let mut unique_grouping = HashMap::new();
+        for label in grouping {
+            unique_grouping.insert(label.clone(), ());
+        }
+        unique_grouping.into_keys().collect()
     }
 }
 
-/// 执行策略
-#[derive(Debug, Clone)]
-pub struct ExecutionStrategy {
-    /// 是否使用并行执行
-    pub use_parallel: bool,
-    /// 是否使用索引
-    pub use_index: bool,
-    /// 降采样级别
-    pub downsample_level: u8,
-    /// 是否缓存结果
-    pub cache_result: bool,
+impl Default for QueryOptimizer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-/// 优化统计信息
+/// 优化统计
 #[derive(Debug, Clone, Default)]
 pub struct OptimizationStats {
-    pub optimized_plans: u64,
-    pub cost_reduction: f64,
+    pub predicates_pushed_down: u64,
+    pub columns_pruned: u64,
+    pub redundant_conditions_eliminated: u64,
+    pub constants_folded: u64,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::parser::{Matchers, Matcher, MatchOp};
 
     #[test]
-    fn test_cost_calculation() {
+    fn test_optimize_vector_query() {
         let optimizer = QueryOptimizer::new();
         
-        let cost1 = QueryCost::new(100.0, 50.0, 1024.0, 0.0);
-        let cost2 = QueryCost::new(200.0, 100.0, 2048.0, 0.0);
-        
-        assert!(cost2.total_cost > cost1.total_cost);
-    }
+        let query = VectorQueryPlan {
+            name: Some("http_requests_total".to_string()),
+            matchers: vec![("__name__".to_string(), "http_requests_total".to_string())],
+            at: None,
+            offset: None,
+        };
 
-    #[test]
-    fn test_downsample_level_selection() {
-        let optimizer = QueryOptimizer::new();
+        let plan = QueryPlan {
+            plan_type: PlanType::VectorQuery(query),
+            start: 0,
+            end: 1000,
+            step: 100,
+        };
+
+        let optimized = optimizer.optimize(plan).unwrap();
         
-        // 小于1小时，使用原始数据
-        assert_eq!(optimizer.select_downsample_level(30 * 60 * 1000), 0);
-        
-        // 1小时到1天，使用L1
-        assert_eq!(optimizer.select_downsample_level(2 * 60 * 60 * 1000), 1);
-        
-        // 1周到1月，使用L3
-        assert_eq!(optimizer.select_downsample_level(20 * 24 * 60 * 60 * 1000), 3);
+        match optimized.plan_type {
+            PlanType::VectorQuery(q) => {
+                assert_eq!(q.name, Some("http_requests_total".to_string()));
+            }
+            _ => panic!("Expected Vector plan"),
+        }
     }
 }

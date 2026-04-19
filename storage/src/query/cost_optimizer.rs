@@ -326,6 +326,12 @@ impl CostBasedOptimizer {
                 // 假设聚合后行数减少10倍
                 Ok(std::cmp::max(1, input_rows / 10))
             }
+            PlanType::Subquery(sq) => {
+                // 估计子查询的行数
+                let inner_rows = self.estimate_rows(&sq.expr.plan_type)?;
+                let num_steps = (sq.range / sq.resolution) as u64;
+                Ok(inner_rows * num_steps)
+            }
         }
     }
 
@@ -488,8 +494,14 @@ impl CostBasedOptimizer {
             PlanType::Aggregation(agg) => {
                 let input_cost = self.estimate_cost(&agg.expr.plan_type, cost_model)?;
                 let agg_cost = cost_model.calculate_aggregation_cost(1000, 100);
-                
+
                 Ok(input_cost + agg_cost)
+            }
+            PlanType::Subquery(sq) => {
+                // 估计子查询成本
+                let inner_cost = self.estimate_cost(&sq.expr.plan_type, cost_model)?;
+                let num_steps = (sq.range / sq.resolution) as usize;
+                Ok(inner_cost * num_steps as f64)
             }
         }
     }

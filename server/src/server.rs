@@ -160,10 +160,15 @@ fn load_private_key(path: &str) -> Result<PrivateKey> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[tokio::test]
     async fn test_server_creation() {
-        let config = ServerConfig::default();
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let mut config = ServerConfig::default();
+        config.data_dir = temp_dir.path().to_path_buf();
+        config.storage.local_path = Some(temp_dir.path().join("data"));
+        
         let server = Server::with_config(config).await.unwrap();
 
         assert_eq!(server.config().port, 9090);
