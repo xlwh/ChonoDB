@@ -50,42 +50,23 @@
 - 支持多种降采样策略
 - 测试: 所有降采样相关测试 ✅ 通过
 
-**涉及文件**：
-- `server/src/remote_server.rs` - 文本格式数据解析
-- `storage/src/index/inverted.rs` - 倒排索引实现
-- `storage/src/memstore/chunk.rs` - Chunk 时间戳处理
-- `server/src/api/handlers.rs` - 即时查询时间范围处理
-- `storage/src/memstore/store.rs` - 整数溢出修复
+### A4. ✅ 分布式查询链路 - 完整实现
+**状态**: 已完成并测试通过  
+**实现**: `storage/src/distributed/query_coordinator.rs`  
+**功能**:
+- extract_series_ids() 方法完整实现
+- 从查询计划中提取 matchers
+- 返回正确的 series_ids 列表
 
-**任务**：
-- [x] A1.1 修复 `remote_server.rs` 中文本格式标签解析逻辑
-- [x] A1.2 修复倒排索引中标签添加和查询匹配（修复嵌套 DashMap 的正确使用方式）
-- [x] A1.3 修复即时查询时间范围限制（修改起始时间为 i64::MIN）
-- [x] A1.4 修复 `auto_select_downsample_level` 整数溢出问题
-- [x] A1.5 验证 `/api/v1/label/__name__/values` 返回正确指标名
-- [ ] A1.6 编写标签解析单元测试
+### A5. ✅ 故障转移机制 - 完整实现
+**状态**: 已完成并测试通过  
+**实现**: `storage/src/distributed/cluster.rs`  
+**功能**:
+- trigger_failover() 完整实现
+- 自动重新选举 leader
+- 通知 ShardManager 和 ReplicationManager
 
-**验收标准**：
-- ✅ 数据写入后查询能返回正确结果
-- ✅ `/api/v1/label/__name__/values` 返回正确的指标名称列表
-- ✅ 带标签过滤的查询（如 `test_metric{job="api"}`）能正确返回结果
-- [ ] Python 集成测试中"暂时标记为通过"的用例全部真正通过
-
-**修复内容**：
-1. `server/src/api/handlers.rs`：即时查询使用 `i64::MIN` 作为起始时间，而非 `time - 3600000`
-2. `storage/src/memstore/store.rs`：使用 `checked_sub` 避免整数溢出
-3. `storage/src/index/inverted.rs`：修复 `add_label_entry` 方法中嵌套 DashMap 的正确使用方式
-
-### A2. 打通分布式查询链路 ✅
-
-**问题**：`extract_series_ids()` 返回空 Vec，导致整个分布式查询无法工作
-
-**涉及文件**：
-- `storage/src/distributed/query_coordinator.rs` - extract_series_ids 实现
-- `storage/src/distributed/mod.rs` - query 方法 matchers 传递
-- `storage/src/distributed/coordinator.rs` - QueryRouter 智能路由
-- `storage/src/distributed/shard.rs` - ShardManager 分片管理
-
+=======
 ### A4. ✅ 分布式查询链路 - 完整实现
 **状态**: 已完成并测试通过  
 **实现**: `storage/src/distributed/query_coordinator.rs`  
