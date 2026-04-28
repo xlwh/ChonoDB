@@ -3,6 +3,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 use chronodb_storage::{MemStore, StorageConfig};
 use chronodb_storage::downsample::{DownsampleManager, DownsampleConfig as StorageDownsampleConfig};
+use chronodb_storage::flush::{FlushManager, FlushConfig};
 use chronodb_storage::query::{QueryEngine, FrequencyTracker, FrequencyConfig};
 use crate::config::ServerConfig;
 use crate::rules::{RuleManager, AlertManager, PreAggregationManager, PreAggregationScheduler};
@@ -15,6 +16,9 @@ pub struct ServerState {
     
     /// 内存存储
     pub memstore: Arc<MemStore>,
+    
+    /// 刷盘管理器
+    pub flush_manager: Arc<RwLock<FlushManager>>,
     
     /// 规则管理器
     pub rule_manager: Arc<RwLock<RuleManager>>,
@@ -43,6 +47,35 @@ impl ServerState {
             ..StorageConfig::default()
         };
         let memstore = Arc::new(MemStore::new(storage_config)?);
+        
+        // 创建刷盘配置
+        let flush_config = FlushConfig {
+            data_dir: config.storage.local_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| config.data_dir.join("data").to_string_lossy().to_string()),
+            block_size_threshold: 100000,
+            flush_interval_secs: 300,
+            auto_flush: true,
+        };
+        
+        // 创建刷盘管理器
+        let (flush_manager, rx) = FlushManager::new(
+            &flush_config.data_dir,
+            flush_config.block_size_threshold,
+            flush_config.flush_interval_secs,
+        );
+        
+        // 启动刷盘管理器
+        let flush_manager_clone = flush_manager.clone();
+        let memstore_for_flush = memstore.clone();
+        tokio::spawn(async move {
+            if let Err(e) = flush_manager_clone.run(rx, memstore_for_flush).await {
+                tracing::error!("Flush manager error: {}", e);
+            }
+        });
+        
+        let flush_manager = Arc::new(RwLock::new(flush_manager));
         
         // 创建规则管理器
         let mut rule_manager = RuleManager::new();
@@ -124,6 +157,7 @@ impl ServerState {
         Ok(Arc::new(Self {
             config,
             memstore,
+            flush_manager,
             rule_manager,
             alert_manager,
             target_manager,

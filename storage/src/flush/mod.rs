@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
+#[derive(Clone)]
 pub struct FlushManager {
     data_dir: PathBuf,
     block_size_threshold: usize,
@@ -15,7 +16,7 @@ pub struct FlushManager {
     tx: mpsc::Sender<FlushCommand>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum FlushCommand {
     Flush,
     Shutdown,
